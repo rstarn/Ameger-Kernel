@@ -29,7 +29,13 @@ if (Test-Path $payloadPath) {
   Write-Warning "Payload not found at $payloadPath (drop renewed Target.dll there before building)"
 }
 
-$mapperDir = "D:\Injector\Mapper\Build\Release"
+$mapperDir = $null
+foreach ($candidate in @("D:\Ameger\Mapper\Build\Release",
+                         "D:\Injector\Mapper\Build\Release",
+                         "$env:ProgramFiles\Ameger\Mapper\Build\Release")) {
+  if (Test-Path (Join-Path $candidate "Mapper.exe")) { $mapperDir = $candidate; break }
+}
+if (-not $mapperDir) { $mapperDir = "D:\Ameger\Mapper\Build\Release" }
 if (Test-Path (Join-Path $mapperDir "Offsets.ini")) {
   Write-Host "Offsets  -> direct (not replicated): $(Join-Path $mapperDir 'Offsets.ini')"
 } else {

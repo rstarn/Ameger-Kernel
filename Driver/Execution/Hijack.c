@@ -392,7 +392,16 @@ InjectorAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
     InjectorDiagLog("[Hijack] tid=%lu trampoline stack at 0x%llX\n",
                   Tid, (unsigned long long)returnSlotVa);
 
+    /*
+     * Loader-compatible entry contract.  RCX carries the mapped image base
+     * (the HMODULE a DllMain expects), RDX the reason and R8 the reserved
+     * argument, so an image entry point can be called exactly the way the
+     * Windows loader calls it (DLL_PROCESS_ATTACH).  For a plain exported
+     * entry such as ManualEntry(HMODULE) the extra registers are ignored.
+     */
     ctx.Rcx = (DWORD64)RemoteBase;
+    ctx.Rdx = (DWORD64)INJECTOR_DLL_PROCESS_ATTACH;
+    ctx.R8 = 0;
     ctx.Rip = (DWORD64)ExecutionVa;
     ctx.Rsp = (DWORD64)returnSlotVa;
 

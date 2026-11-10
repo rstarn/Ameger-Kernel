@@ -28,6 +28,7 @@
 #define INJECTOR_MAX_FORWARD_DEPTH  2
 #define INJECTOR_MAX_EXPORT_NAMES   65536
 #define INJECTOR_MAX_NAME_LEN       512
+#define INJECTOR_MAX_TLS_CALLBACKS  16
 
 /*
  * The driver resolves a payload's imports against the modules that are
@@ -307,6 +308,11 @@ typedef struct _INJECTOR_PE {
     WORD               *NameOrdinals;
     DWORD              *FuncRvas;
     char                DllName[INJECTOR_MAX_NAME_LEN];
+
+    /* TLS callbacks, as RVAs.  The Windows loader runs these with
+       DLL_PROCESS_ATTACH before DllMain; a manual map has to do the same. */
+    DWORD               TlsCallbackRva[INJECTOR_MAX_TLS_CALLBACKS];
+    int                 TlsCallbackCount;
 } INJECTOR_PE;
 
 /* Frees the export tables.  The image buffer is owned by the caller. */
@@ -659,9 +665,62 @@ static int pe_parse_exports(INJECTOR_PE *pe)
     return 1;
 }
 
-static const char *pe_export_name(const INJECTOR_PE *pe, DWORD nameIndex,
-                                  char *buf, size_t cap)
+/*
+ * Collect the image's TLS callbacks.  The loader runs them with
+ * DLL_PROCESS_ATTACH before DllMain, so a manual map has to run them too.
+ */
+static void pe_parse_tls(INJECTOR_PE *pe)
 {
+    IMAGE_DATA_DIRECTORY dd;
+    IMAGE_TLS_DIRECTORY64 dir;
+    DWORD dirRaw = 0;
+    ULONG64 cbRva;
+    DWORD cbRaw = 0;
+    int i;
+
+    pe->TlsCallbackCount = 0;
+    if (pe->Nt.OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_TLS)
+        return;
+
+    dd = pe->Nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS];
+    if (dd.VirtualAddress == 0 || dd.Size < sizeof(IMAGE_TLS_DIRECTORY64))
+        return;
+    if (!pe_rva_to_raw(pe, dd.VirtualAddress, &dirRaw))
+        return;
+    if ((size_t)dirRaw + sizeof(dir) > pe->Len)
+        return;
+
+    memcpy(&dir, pe->Buf + dirRaw, sizeof(dir));
+    if (dir.AddressOfCallBacks == 0)
+        return;
+
+    /* AddressOfCallBacks is a virtual address in the preferred image base
+       space; convert it to an RVA. */
+    if (dir.AddressOfCallBacks < pe->Nt.OptionalHeader.ImageBase)
+        return;
+    cbRva = dir.AddressOfCallBacks - pe->Nt.OptionalHeader.ImageBase;
+    if (cbRva > 0xFFFFFFFFULL)
+        return;
+    if (!pe_rva_to_raw(pe, (DWORD)cbRva, &cbRaw))
+        return;
+
+    for (i = 0; i < INJECTOR_MAX_TLS_CALLBACKS; i++) {
+        ULONG64 va = 0;
+
+        if ((size_t)cbRaw + (size_t)(i + 1) * sizeof(ULONG64) > pe->Len)
+            break;
+        memcpy(&va, pe->Buf + cbRaw + (size_t)i * sizeof(ULONG64), sizeof(va));
+        if (va == 0)
+            break;
+        if (va < pe->Nt.OptionalHeader.ImageBase)
+            break;
+        pe->TlsCallbackRva[pe->TlsCallbackCount++] =
+            (DWORD)(va - pe->Nt.OptionalHeader.ImageBase);
+    }
+}
+
+static const char *pe_export_name(const INJECTOR_PE *pe, DWORD nameIndex,
+                                  char *buf, size_t cap){
     DWORD raw = 0;
     size_t k = 0;
 
@@ -1156,6 +1215,21 @@ static int discover_export(const INJECTOR_PE *pe, const char *explicitName,
         snprintf(err, errCap, "the export directory is empty");
     else
         snprintf(err, errCap, "the image exports no code");
+
+    /*
+     * Last resort: the image entry point.  The Windows loader calls it with
+     * DllMain semantics, and the driver does the same, so a DLL that
+     * exports nothing is still injectable.
+     */
+    if (pe->Nt.OptionalHeader.AddressOfEntryPoint != 0 &&
+        pe->Nt.OptionalHeader.AddressOfEntryPoint < pe->Nt.OptionalHeader.SizeOfImage) {
+        out->rva = pe->Nt.OptionalHeader.AddressOfEntryPoint;
+        snprintf(out->name, sizeof(out->name), "<image entry point>");
+        lstrcpynA(out->origin, "PE entry point (DllMain)", (int)sizeof(out->origin));
+        out->forwarded = pe_is_forwarded(pe, out->rva);
+        return 1;
+    }
+
     return 0;
 }
 
@@ -1729,6 +1803,12 @@ static int plan_prepare(INJECT_PLAN *plan, const char *dllOverride,
     }
     plan->PeParsed = TRUE;
     pe_parse_exports(&plan->Pe);
+    pe_parse_tls(&plan->Pe);
+    if (plan->Pe.TlsCallbackCount > 0) {
+        printf("  TLS callbacks: %d (first at RVA 0x%X)\n",
+               plan->Pe.TlsCallbackCount,
+               (unsigned)plan->Pe.TlsCallbackRva[0]);
+    }
 
     printf("  PE: %s  magic=0x%03X  SizeOfImage=0x%X  sections=%u  file=%zu bytes\n",
            pe_arch_text(&plan->Pe),
@@ -1932,6 +2012,13 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
         printf("  tls: slot=%ld status=0x%08lX threads_seeded=%ld\n",
                (long)ch->TlsSlot, (unsigned long)ch->TlsStatus,
                (long)ch->TlsThreadsSeeded);
+        if ((unsigned long)st == 0xC0000225UL) {
+            printf("  hint: STATUS_NOT_FOUND here means an import of the payload "
+                   "could not be resolved in the target.\n");
+            printf("        If the driver was rebuilt, an older instance may "
+                   "still be mapped and serving this channel:\n");
+            printf("        reboot, then remap the new driver, then retry.\n");
+        }
         return 5;
     }
 
@@ -1947,11 +2034,10 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
     return 0;
 }
 
-static int inject_exec(INJECTOR_CHANNEL *ch, INJECT_PLAN *plan)
+static int inject_exec_va(INJECTOR_CHANNEL *ch, unsigned long long execVa,
+                           const char *label)
 {
-    unsigned long long execVa = ch->RemoteBase + plan->EntryRva;
-
-    printf("  sending CMD_EXEC execVa=0x%016llX\n", execVa);
+    printf("  sending CMD_EXEC %s execVa=0x%016llX\n", label, execVa);
     ch->ExecutionVa = execVa;
     ch->HijackThreadId = 0;
     ch->HijackReserved = 0;
@@ -1968,6 +2054,25 @@ static int inject_exec(INJECTOR_CHANNEL *ch, INJECT_PLAN *plan)
            (unsigned long)est, ntstatus_hint(est), tid);
     if (est != 0) return 8;
     return 0;
+}
+
+/*
+ * Loader execution order: the image's TLS callbacks run first with
+ * DLL_PROCESS_ATTACH, then the entry point.  A payload that does its setup
+ * in a TLS callback needs both.
+ */
+static int inject_exec(INJECTOR_CHANNEL *ch, INJECT_PLAN *plan)
+{
+    int i;
+
+    for (i = 0; i < plan->Pe.TlsCallbackCount; i++) {
+        int rc = inject_exec_va(ch,
+                                ch->RemoteBase + plan->Pe.TlsCallbackRva[i],
+                                "tls callback");
+        if (rc != 0) return rc;
+    }
+
+    return inject_exec_va(ch, ch->RemoteBase + plan->EntryRva, "entry point");
 }
 
 static int run_inject(INJECTOR_CHANNEL *ch, unsigned int pid,

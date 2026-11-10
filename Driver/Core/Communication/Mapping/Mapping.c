@@ -168,7 +168,12 @@ NTSTATUS InjectorChannelMapIntoProcess(_In_ PEPROCESS Process)
         ZwClose(hProcess);
         InjectorDiagLog("[MapInto] pid=%lu already mapped (conflicting address)\n",
                       (unsigned long)(ULONG_PTR)PsGetProcessId(Process));
-        return STATUS_SUCCESS;
+        /*
+         * Reported as a conflict rather than success so the caller can tell
+         * "another driver instance already owns the client VA" apart from
+         * "this driver mapped it".
+         */
+        return STATUS_CONFLICTING_ADDRESSES;
     }
     if (!NT_SUCCESS(status)) {
         ZwClose(hProcess);
@@ -197,6 +202,8 @@ NTSTATUS InjectorChannelMapExisting(VOID)
     ULONG len = 0;
     ULONG used = 0;
     ULONG offset = 0;
+    ULONG mappedCount = 0;
+    ULONG conflictCount = 0;
     PINJECTOR_SYSTEM_PROCESS_INFORMATION spi = NULL;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
@@ -262,6 +269,10 @@ NTSTATUS InjectorChannelMapExisting(VOID)
                     InjectorDiagLog("[Existing] PID %lu map result=0x%08X\n",
                                   (unsigned long)(ULONG_PTR)cur->UniqueProcessId,
                                   mapStatus);
+                    if (mapStatus == STATUS_CONFLICTING_ADDRESSES)
+                        conflictCount++;
+                    else if (NT_SUCCESS(mapStatus))
+                        mappedCount++;
                     ObDereferenceObject(proc);
                 } else {
                     InjectorDiagLog("[Existing] PID %lu lookup=0x%08X\n",
@@ -282,5 +293,20 @@ NTSTATUS InjectorChannelMapExisting(VOID)
     }
 
     ExFreePoolWithTag(spi, INJECTOR_TAG_LOOKUP);
+
+    if (conflictCount != 0 && mappedCount == 0) {
+        /*
+         * Every candidate process already had the client VA mapped.  That is
+         * what happens when a second copy of this driver is loaded while an
+         * older copy is still resident: the older instance owns the VA and
+         * keeps serving the client, so the rebuilt driver never runs.
+         */
+        InjectorDiagLog("[Existing] WARNING: %lu conflicts, 0 mappings - another "
+                      "driver instance already owns VA 0x%llX. Reboot (or free the "
+                      "old instance) before using a rebuilt driver.\n",
+                      (unsigned long)conflictCount,
+                      (unsigned long long)INJECTOR_CHANNEL_USER_VA);
+    }
+
     return STATUS_SUCCESS;
 }
