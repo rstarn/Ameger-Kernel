@@ -83,31 +83,45 @@ DriverKernelValidate(_Inout_ PINJECTOR_CHANNEL Ch,
     return STATUS_SUCCESS;
 }
 
+/*
+ * Map an image into the target: create a section, publish it in the system
+ * address space, copy the headers and sections, map it into the target,
+ * apply the relocations and resolve the imports.
+ *
+ * Shared by the payload itself and by the dependency loader, which uses it
+ * to bring a module the target has not loaded into the target's address
+ * space.
+ */
 NTSTATUS
-DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
-                _In_reads_bytes_(Size) const UINT8 *Buf,
-                _In_ UINT32 Size)
+InjectorMapImageIntoTarget(_In_ PEPROCESS Target,
+                           _In_reads_bytes_(Size) const UINT8 *Buf,
+                           _In_ SIZE_T Size,
+                           _Out_ PVOID *OutBase,
+                           _Out_ PVOID *OutSysView,
+                           _Out_ PHANDLE OutProcess,
+                           _Out_ PINJECTOR_PE_INFO OutInfo)
 {
     INJECTOR_PE_INFO info;
     PIMAGE_NT_HEADERS64 nt = NULL;
-    PEPROCESS proc = NULL;
     HANDLE hSection = NULL;
     HANDLE hProcess = NULL;
     PVOID sysView = NULL;
     PVOID remoteBase = NULL;
     SIZE_T sysViewSize = 0;
     SIZE_T remoteSize = 0;
-    BOOLEAN remoteMapped = FALSE;
     LARGE_INTEGER maxSize;
     OBJECT_ATTRIBUTES sectionOa;
     NTSTATUS status;
-    NTSTATUS tlsStatus;
     ULONG i;
     const IMAGE_SECTION_HEADER *sec = NULL;
-    LONG tlsSlot = INJECTOR_TLS_SLOT_INVALID;
-    LONG tlsSeeded = 0;
 
-    if (Ch == NULL || Buf == NULL || Size == 0)
+    *OutBase = NULL;
+    *OutSysView = NULL;
+    if (OutProcess != NULL)
+        *OutProcess = NULL;
+
+    if (Target == NULL || Buf == NULL || Size == 0 ||
+        OutBase == NULL || OutSysView == NULL)
         return STATUS_INVALID_PARAMETER;
 
     status = InjectorValidatePe(Buf, Size, &info);
@@ -118,28 +132,9 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
     if (!NT_SUCCESS(status))
         return status;
 
-    if (Ch->Pid == 0)
-        return STATUS_INVALID_PARAMETER;
-
     nt = InjectorGetNtHeaders(Buf, Size);
     if (nt == NULL)
         return STATUS_INVALID_IMAGE_FORMAT;
-
-    status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)Ch->Pid, &proc);
-    if (!NT_SUCCESS(status) || proc == NULL) {
-        if (NT_SUCCESS(status))
-            status = STATUS_INVALID_PARAMETER;
-        return status;
-    }
-
-    if (PsGetProcessExitStatus(proc) != STATUS_PENDING) {
-        ObDereferenceObject(proc);
-        return STATUS_PROCESS_IS_TERMINATING;
-    }
-    if (PsGetProcessPeb(proc) == NULL) {
-        ObDereferenceObject(proc);
-        return STATUS_NOT_FOUND;
-    }
 
     InitializeObjectAttributes(&sectionOa, NULL,
                                OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
@@ -184,7 +179,7 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
         }
     }
 
-    status = ObOpenObjectByPointer(proc, OBJ_KERNEL_HANDLE, NULL,
+    status = ObOpenObjectByPointer(Target, OBJ_KERNEL_HANDLE, NULL,
                                    PROCESS_VM_OPERATION,
                                    *PsProcessType, KernelMode, &hProcess);
     if (!NT_SUCCESS(status)) {
@@ -201,10 +196,10 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
         InjectorDiagLog("[Map] ZwMapViewOfSection failed: 0x%08X\n", status);
         goto fail;
     }
-    remoteMapped = TRUE;
 
-    InjectorDiagLog("[Map] pid=%u base=%p size=0x%X preferred=0x%llX\n",
-                  (unsigned)Ch->Pid, remoteBase, info.SizeOfImage,
+    InjectorDiagLog("[Map] pid=%lu base=%p size=0x%X preferred=0x%llX\n",
+                  (unsigned long)(ULONG_PTR)PsGetProcessId(Target),
+                  remoteBase, info.SizeOfImage,
                   (unsigned long long)info.PreferredBase);
 
     if (info.PreferredBase != 0) {
@@ -220,12 +215,96 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
         }
     }
 
-    status = InjectorResolveImports(proc, (UINT8 *)sysView,
+    status = InjectorResolveImports(Target, (UINT8 *)sysView,
                                   info.SizeOfImage);
     if (!NT_SUCCESS(status)) {
         InjectorDiagLog("[Map] import resolution failed: 0x%08X\n", status);
         goto fail;
     }
+
+    *OutBase = remoteBase;
+    *OutSysView = sysView;
+    if (OutProcess != NULL)
+        *OutProcess = hProcess;
+    else
+        ZwClose(hProcess);
+    if (OutInfo != NULL)
+        *OutInfo = info;
+
+    ZwClose(hSection);
+    return STATUS_SUCCESS;
+
+fail:
+    if (remoteBase != NULL && hProcess != NULL)
+        (void)ZwUnmapViewOfSection(hProcess, remoteBase);
+    if (sysView != NULL)
+        InjectorUnmapSectionInSystemSpace(sysView);
+    if (hProcess != NULL)
+        ZwClose(hProcess);
+    if (hSection != NULL)
+        ZwClose(hSection);
+    return status;
+}
+
+NTSTATUS
+DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
+                _In_reads_bytes_(Size) const UINT8 *Buf,
+                _In_ UINT32 Size)
+{
+    INJECTOR_PE_INFO info;
+    PIMAGE_NT_HEADERS64 nt = NULL;
+    PEPROCESS proc = NULL;
+    HANDLE hSection = NULL;
+    HANDLE hProcess = NULL;
+    PVOID sysView = NULL;
+    PVOID remoteBase = NULL;
+    BOOLEAN remoteMapped = FALSE;
+    NTSTATUS status;
+    NTSTATUS tlsStatus;
+    ULONG i;
+    const IMAGE_SECTION_HEADER *sec = NULL;
+    LONG tlsSlot = INJECTOR_TLS_SLOT_INVALID;
+    LONG tlsSeeded = 0;
+
+    if (Ch == NULL || Buf == NULL || Size == 0)
+        return STATUS_INVALID_PARAMETER;
+
+    status = InjectorValidatePe(Buf, Size, &info);
+    if (!NT_SUCCESS(status))
+        return status;
+
+    status = InjectorWalkImports(Buf, Size, &info);
+    if (!NT_SUCCESS(status))
+        return status;
+
+    if (Ch->Pid == 0)
+        return STATUS_INVALID_PARAMETER;
+
+    nt = InjectorGetNtHeaders(Buf, Size);
+    if (nt == NULL)
+        return STATUS_INVALID_IMAGE_FORMAT;
+
+    status = PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)Ch->Pid, &proc);
+    if (!NT_SUCCESS(status) || proc == NULL) {
+        if (NT_SUCCESS(status))
+            status = STATUS_INVALID_PARAMETER;
+        return status;
+    }
+
+    if (PsGetProcessExitStatus(proc) != STATUS_PENDING) {
+        ObDereferenceObject(proc);
+        return STATUS_PROCESS_IS_TERMINATING;
+    }
+    if (PsGetProcessPeb(proc) == NULL) {
+        ObDereferenceObject(proc);
+        return STATUS_NOT_FOUND;
+    }
+
+    status = InjectorMapImageIntoTarget(proc, Buf, (SIZE_T)Size,
+                                        &remoteBase, &sysView,
+                                        &hProcess, &info);
+    if (!NT_SUCCESS(status))
+        goto fail;
 
     tlsStatus = InjectorTlsSetup(proc, remoteBase, info.SizeOfImage,
                                &tlsSlot, &tlsSeeded);

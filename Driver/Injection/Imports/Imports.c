@@ -1,5 +1,6 @@
 #include "Imports.h"
 #include "../../NT/Definitions.h"
+#include "../DLL/Payload.h"
 #include <ntimage.h>
 #include <ntdef.h>
 
@@ -143,6 +144,231 @@ ImportIsApisetName(_In_ const char *Name)
             ImportHasPrefix(Name, "ext-ms-")) ? TRUE : FALSE;
 }
 
+/*
+ * Modules this driver has injected into a target are not in the target's
+ * loader list, so they are tracked here and looked up first.
+ */
+#define INJECTOR_MAX_INJECTED_MODULES 32
+#define INJECTOR_MAX_DEPENDENCY_SIZE  (16u * 1024u * 1024u)
+#define INJECTOR_MAX_DEPENDENCY_DEPTH 4
+
+typedef struct _INJECTOR_MODULE_ENTRY {
+    CHAR   Name[INJECTOR_MODULE_NAME_MAX];
+    PVOID  Base;
+} INJECTOR_MODULE_ENTRY, *PINJECTOR_MODULE_ENTRY;
+
+static INJECTOR_MODULE_ENTRY g_InjectedModules[INJECTOR_MAX_INJECTED_MODULES];
+static ULONG g_InjectedModuleCount = 0;
+static volatile LONG g_ImportDepth = 0;
+
+/* Case-insensitive module name comparison, ignoring an optional ".dll". */
+static BOOLEAN
+ImportModuleNameMatch(_In_ const char *A, _In_ const char *B)
+{
+    SIZE_T alen = 0;
+    SIZE_T blen = 0;
+
+    if (A == NULL || B == NULL)
+        return FALSE;
+
+    while (A[alen] != '\0') alen++;
+    while (B[blen] != '\0') blen++;
+    if (alen >= 4 && AsciiNICmp(A + alen - 4, ".dll", 4) == 0 &&
+        A[alen - 4] != '\0') alen -= 4;
+    if (blen >= 4 && AsciiNICmp(B + blen - 4, ".dll", 4) == 0 &&
+        B[blen - 4] != '\0') blen -= 4;
+    if (alen != blen)
+        return FALSE;
+
+    {
+        SIZE_T i;
+        for (i = 0; i < alen; i++) {
+            UCHAR a = (UCHAR)A[i];
+            UCHAR b = (UCHAR)B[i];
+            if (a >= 'A' && a <= 'Z') a = (UCHAR)(a + 32);
+            if (b >= 'A' && b <= 'Z') b = (UCHAR)(b + 32);
+            if (a != b)
+                return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static VOID
+ImportCopyName(_Out_ CHAR *Dst, _In_ SIZE_T DstSize, _In_ const char *Src)
+{
+    SIZE_T i = 0;
+
+    if (Dst == NULL || DstSize == 0)
+        return;
+    while (Src != NULL && Src[i] != '\0' && i + 1 < DstSize) {
+        Dst[i] = Src[i];
+        i++;
+    }
+    Dst[i] = '\0';
+}
+
+static VOID
+ImportRegisterModule(_In_ const char *Name, _In_ PVOID Base)
+{
+    ULONG i;
+
+    if (Name == NULL || Base == NULL)
+        return;
+
+    for (i = 0; i < g_InjectedModuleCount; i++) {
+        if (ImportModuleNameMatch(g_InjectedModules[i].Name, Name)) {
+            g_InjectedModules[i].Base = Base;
+            return;
+        }
+    }
+    if (g_InjectedModuleCount >= INJECTOR_MAX_INJECTED_MODULES)
+        return;
+    ImportCopyName(g_InjectedModules[g_InjectedModuleCount].Name,
+                   sizeof(g_InjectedModules[0].Name), Name);
+    g_InjectedModules[g_InjectedModuleCount].Base = Base;
+    g_InjectedModuleCount++;
+}
+
+/*
+ * Read a system module from disk.  The Windows loader can pull a module
+ * into a process on demand (LdrpLoadDll); a kernel driver cannot call that,
+ * so a dependency the target has not loaded is read and mapped by hand.
+ */
+static NTSTATUS
+ImportReadSystemModule(_In_ const char *ModuleName,
+                       _Out_ PUINT8 *OutBuf, _Out_ SIZE_T *OutSize)
+{
+    WCHAR wpath[160];
+    UNICODE_STRING path;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h = NULL;
+    IO_STATUS_BLOCK iosb;
+    FILE_STANDARD_INFORMATION finfo;
+    PUINT8 buf = NULL;
+    SIZE_T n = 0;
+    SIZE_T i;
+    NTSTATUS status;
+
+    *OutBuf = NULL;
+    *OutSize = 0;
+
+    if (ModuleName == NULL || ModuleName[0] == '\0')
+        return STATUS_INVALID_PARAMETER;
+
+    {
+        const WCHAR prefix[] = L"\\SystemRoot\\System32\\";
+
+        for (i = 0; prefix[i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++)
+            wpath[n++] = prefix[i];
+        for (i = 0; ModuleName[i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++)
+            wpath[n++] = (WCHAR)(UCHAR)ModuleName[i];
+        wpath[n] = L'\0';
+    }
+
+    RtlInitUnicodeString(&path, wpath);
+    InitializeObjectAttributes(&oa, &path,
+                               OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                               NULL, NULL);
+
+    status = ZwCreateFile(&h, GENERIC_READ, &oa, NULL, NULL, 0,
+                          FILE_SHARE_READ, FILE_OPEN,
+                          FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                          NULL, 0);
+    if (!NT_SUCCESS(status)) {
+        InjectorDiagLog("[Deps] %s: open failed 0x%08X\n", ModuleName, status);
+        return status;
+    }
+
+    RtlZeroMemory(&finfo, sizeof(finfo));
+    status = ZwQueryInformationFile(h, &iosb, &finfo, sizeof(finfo),
+                                    FileStandardInformation);
+    if (!NT_SUCCESS(status) || finfo.AllocationSize.QuadPart <= 0) {
+        ZwClose(h);
+        return (NT_SUCCESS(status)) ? STATUS_INVALID_PARAMETER : status;
+    }
+    if ((ULONG64)finfo.AllocationSize.QuadPart > INJECTOR_MAX_DEPENDENCY_SIZE) {
+        ZwClose(h);
+        InjectorDiagLog("[Deps] %s: too large (%lld bytes)\n", ModuleName,
+                      (long long)finfo.AllocationSize.QuadPart);
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    buf = (PUINT8)ExAllocatePool2(POOL_FLAG_NON_PAGED,
+                                  (SIZE_T)finfo.AllocationSize.QuadPart,
+                                  INJECTOR_TAG_LOOKUP);
+    if (buf == NULL) {
+        ZwClose(h);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    {
+        LARGE_INTEGER off;
+        ULONG done = 0;
+
+        off.QuadPart = 0;
+        status = ZwReadFile(h, NULL, NULL, NULL, &iosb, buf,
+                            (ULONG)finfo.AllocationSize.QuadPart, &off, NULL);
+        if (!NT_SUCCESS(status)) {
+            ExFreePoolWithTag(buf, INJECTOR_TAG_LOOKUP);
+            ZwClose(h);
+            InjectorDiagLog("[Deps] %s: read failed 0x%08X\n", ModuleName, status);
+            return status;
+        }
+        done = (ULONG)iosb.Information;
+        *OutSize = (SIZE_T)done;
+    }
+    ZwClose(h);
+
+    *OutBuf = buf;
+    return STATUS_SUCCESS;
+}
+
+/*
+ * Bring a module the target has not loaded into the target's address space,
+ * the way the loader would when it resolves an import.  The module is mapped,
+ * relocated and its own imports are resolved; it is then tracked so later
+ * lookups find it.
+ */
+static NTSTATUS
+InjectorLoadDependency(_In_ PEPROCESS Target, _In_ const char *ModuleName,
+                       _Out_ PVOID *OutBase)
+{
+    PUINT8 buf = NULL;
+    SIZE_T size = 0;
+    PVOID base = NULL;
+    PVOID sysView = NULL;
+    HANDLE hProcess = NULL;
+    NTSTATUS status;
+
+    *OutBase = NULL;
+
+    status = ImportReadSystemModule(ModuleName, &buf, &size);
+    if (!NT_SUCCESS(status))
+        return status;
+
+    status = InjectorMapImageIntoTarget(Target, buf, size, &base, &sysView,
+                                        &hProcess, NULL);
+    ExFreePoolWithTag(buf, INJECTOR_TAG_LOOKUP);
+    if (!NT_SUCCESS(status)) {
+        InjectorDiagLog("[Deps] %s: map into target failed 0x%08X\n",
+                      ModuleName, status);
+        return status;
+    }
+
+    ImportRegisterModule(ModuleName, base);
+    InjectorDiagLog("[Deps] %s loaded into target base=%p size=%zu\n",
+                  ModuleName, base, size);
+
+    if (hProcess != NULL)
+        ZwClose(hProcess);
+    if (sysView != NULL)
+        InjectorUnmapSectionInSystemSpace(sysView);
+
+    *OutBase = base;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS
 ImportFindModule(_In_ PEPROCESS Target, _In_ const char *DllName,
                  _Out_ PVOID *OutBase){
@@ -154,6 +380,13 @@ ImportFindModule(_In_ PEPROCESS Target, _In_ const char *DllName,
     ULONG i;
 
     *OutBase = NULL;
+
+    for (i = 0; i < g_InjectedModuleCount; i++) {
+        if (ImportModuleNameMatch(g_InjectedModules[i].Name, DllName)) {
+            *OutBase = g_InjectedModules[i].Base;
+            return STATUS_SUCCESS;
+        }
+    }
 
     peb = PsGetProcessPeb(Target);
     if (peb == NULL)
@@ -798,6 +1031,24 @@ InjectorResolveImports(_In_ PEPROCESS Target,
         realName = ImportRealModuleName(dllName);
 
         st = ImportFindModule(Target, realName, &modBase);
+        if (!NT_SUCCESS(st)) {
+            if (!ImportIsApisetName(realName) &&
+                InterlockedCompareExchange(&g_ImportDepth, 0, 0) <
+                    INJECTOR_MAX_DEPENDENCY_DEPTH) {
+                /*
+                 * The target has not loaded this module.  The Windows loader
+                 * would pull it in on demand; the driver does the same by
+                 * mapping it into the target by hand.
+                 */
+                InterlockedIncrement(&g_ImportDepth);
+                st = InjectorLoadDependency(Target, realName, &modBase);
+                InterlockedDecrement(&g_ImportDepth);
+                if (NT_SUCCESS(st)) {
+                    InjectorDiagLog("[Imports] module %s was not loaded in the "
+                                  "target; loaded it as a dependency\n", realName);
+                }
+            }
+        }
         if (!NT_SUCCESS(st)) {
             if (!ImportIsApisetName(realName)) {
                 InjectorDiagLog("[Imports] FAIL: module %s (as %s) not loaded in target\n",
