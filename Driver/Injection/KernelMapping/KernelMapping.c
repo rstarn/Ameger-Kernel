@@ -1,7 +1,7 @@
 #include "KernelMapping.h"
 
 static NTSTATUS
-AmegerRvaToFileRange(_In_ const IMAGE_NT_HEADERS64 *Nt,
+InjectorRvaToFileRange(_In_ const IMAGE_NT_HEADERS64 *Nt,
                      _In_ ULONG Rva,
                      _In_ ULONG Length,
                      _In_ SIZE_T FileSize,
@@ -52,9 +52,9 @@ AmegerRvaToFileRange(_In_ const IMAGE_NT_HEADERS64 *Nt,
     return STATUS_INVALID_IMAGE_FORMAT;
 }
 
-NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
+NTSTATUS InjectorValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
                           _In_ SIZE_T Size,
-                          _Out_ PAMEGER_PE_INFO Out)
+                          _Out_ PINJECTOR_PE_INFO Out)
 {
     const IMAGE_DOS_HEADER *dos = NULL;
     const IMAGE_NT_HEADERS64 *nt = NULL;
@@ -70,7 +70,7 @@ NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
         return STATUS_INVALID_PARAMETER;
     }
 
-    RtlZeroMemory(Out, sizeof(AMEGER_PE_INFO));
+    RtlZeroMemory(Out, sizeof(INJECTOR_PE_INFO));
 
     if (Buf == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -110,7 +110,7 @@ NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
         return STATUS_INVALID_IMAGE_FORMAT;
     }
 
-    if (nt->OptionalHeader.SizeOfImage == 0 || nt->OptionalHeader.SizeOfImage > AMEGER_MAX_IMAGE) {
+    if (nt->OptionalHeader.SizeOfImage == 0 || nt->OptionalHeader.SizeOfImage > INJECTOR_MAX_IMAGE) {
         return STATUS_INVALID_IMAGE_FORMAT;
     }
 
@@ -151,7 +151,7 @@ NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
     if (relocRva != 0 && relocSize != 0) {
         SIZE_T relocOff = 0;
 
-        if (!NT_SUCCESS(AmegerRvaToFileRange(nt, relocRva, relocSize,
+        if (!NT_SUCCESS(InjectorRvaToFileRange(nt, relocRva, relocSize,
                                              Size, &relocOff))) {
             return STATUS_INVALID_IMAGE_FORMAT;
         }
@@ -197,7 +197,7 @@ NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
     if (importRva != 0 && importSize != 0) {
         SIZE_T importOff = 0;
 
-        if (!NT_SUCCESS(AmegerRvaToFileRange(nt, importRva, importSize,
+        if (!NT_SUCCESS(InjectorRvaToFileRange(nt, importRva, importSize,
                                              Size, &importOff))) {
             return STATUS_INVALID_IMAGE_FORMAT;
         }
@@ -216,13 +216,13 @@ NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
                 if (desc->Name == 0) {
                     break;
                 }
-                if (!NT_SUCCESS(AmegerRvaToFileRange(nt, desc->Name, 1,
+                if (!NT_SUCCESS(InjectorRvaToFileRange(nt, desc->Name, 1,
                                                      Size, &nameOff)) ||
                     Buf[nameOff] == '\0') {
                     return STATUS_INVALID_IMAGE_FORMAT;
                 }
                 Out->ImportDllCount++;
-                if (Out->ImportDllCount > AMEGER_MAX_IMPORT_DLLS) {
+                if (Out->ImportDllCount > INJECTOR_MAX_IMPORT_DLLS) {
                     return STATUS_INVALID_IMAGE_FORMAT;
                 }
                 desc++;
@@ -233,9 +233,9 @@ NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
     return STATUS_SUCCESS;
 }
 
-NTSTATUS AmegerApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
+NTSTATUS InjectorApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
                                 _In_ SIZE_T Size,
-                                _In_ const AMEGER_PE_INFO *Info,
+                                _In_ const INJECTOR_PE_INFO *Info,
                                 _In_ UINT_PTR Delta)
 {
     if (ImageBuf == NULL || Info == NULL) {
@@ -255,7 +255,7 @@ NTSTATUS AmegerApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
     }
 
     {
-        PIMAGE_NT_HEADERS64 nt = AmegerGetNtHeaders(ImageBuf, Size);
+        PIMAGE_NT_HEADERS64 nt = InjectorGetNtHeaders(ImageBuf, Size);
         BOOLEAN imageLayout = (Info->SizeOfImage != 0 &&
                                (SIZE_T)Info->SizeOfImage <= Size);
         SIZE_T relocOff = 0;
@@ -269,7 +269,7 @@ NTSTATUS AmegerApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
             if (nt == NULL) {
                 return STATUS_INVALID_IMAGE_FORMAT;
             }
-            if (!NT_SUCCESS(AmegerRvaToFileRange(nt, Info->BaseRelocRva,
+            if (!NT_SUCCESS(InjectorRvaToFileRange(nt, Info->BaseRelocRva,
                                                  Info->BaseRelocSize,
                                                  Size, &relocOff))) {
                 return STATUS_INVALID_IMAGE_FORMAT;
@@ -314,7 +314,7 @@ NTSTATUS AmegerApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
                             patchTarget = patchOff;
                         } else {
                             SIZE_T patchFile = 0;
-                            if (!NT_SUCCESS(AmegerRvaToFileRange(nt, (ULONG)patchOff,
+                            if (!NT_SUCCESS(InjectorRvaToFileRange(nt, (ULONG)patchOff,
                                                                  sizeof(UINT_PTR),
                                                                  Size, &patchFile))) {
                                 return STATUS_INVALID_IMAGE_FORMAT;
@@ -333,9 +333,9 @@ NTSTATUS AmegerApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
     return STATUS_SUCCESS;
 }
 
-NTSTATUS AmegerWalkImports(_In_ const UINT8 *ImageBuf,
+NTSTATUS InjectorWalkImports(_In_ const UINT8 *ImageBuf,
                            _In_ SIZE_T Size,
-                           _Inout_ PAMEGER_PE_INFO Info)
+                           _Inout_ PINJECTOR_PE_INFO Info)
 {
     PIMAGE_NT_HEADERS64 nt;
     SIZE_T importOff = 0;
@@ -355,12 +355,12 @@ NTSTATUS AmegerWalkImports(_In_ const UINT8 *ImageBuf,
         return STATUS_SUCCESS;
     }
 
-    nt = AmegerGetNtHeaders(ImageBuf, Size);
+    nt = InjectorGetNtHeaders(ImageBuf, Size);
     if (nt == NULL) {
         return STATUS_INVALID_IMAGE_FORMAT;
     }
 
-    if (!NT_SUCCESS(AmegerRvaToFileRange(nt, Info->ImportRva, Info->ImportSize,
+    if (!NT_SUCCESS(InjectorRvaToFileRange(nt, Info->ImportRva, Info->ImportSize,
                                          Size, &importOff))) {
         return STATUS_INVALID_IMAGE_FORMAT;
     }
@@ -379,13 +379,13 @@ NTSTATUS AmegerWalkImports(_In_ const UINT8 *ImageBuf,
             if (desc->Name == 0) {
                 break;
             }
-            if (!NT_SUCCESS(AmegerRvaToFileRange(nt, desc->Name, 1,
+            if (!NT_SUCCESS(InjectorRvaToFileRange(nt, desc->Name, 1,
                                                  Size, &nameOff)) ||
                 ImageBuf[nameOff] == '\0') {
                 return STATUS_INVALID_IMAGE_FORMAT;
             }
             Info->ImportDllCount++;
-            if (Info->ImportDllCount > AMEGER_MAX_IMPORT_DLLS) {
+            if (Info->ImportDllCount > INJECTOR_MAX_IMPORT_DLLS) {
                 return STATUS_INVALID_IMAGE_FORMAT;
             }
             desc++;
@@ -395,7 +395,7 @@ NTSTATUS AmegerWalkImports(_In_ const UINT8 *ImageBuf,
     return STATUS_SUCCESS;
 }
 
-PIMAGE_NT_HEADERS64 AmegerGetNtHeaders(_In_reads_bytes_(Size) const UINT8 *Buf,
+PIMAGE_NT_HEADERS64 InjectorGetNtHeaders(_In_reads_bytes_(Size) const UINT8 *Buf,
                                        _In_ SIZE_T Size)
 {
     const IMAGE_DOS_HEADER *dos = NULL;

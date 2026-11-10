@@ -3,10 +3,10 @@
 #include <ntifs.h>
 #include <ntimage.h>
 
-#define AMEGER_MAX_IMAGE 0x40000000UL
-#define AMEGER_MAX_IMPORT_DLLS 128UL
+#define INJECTOR_MAX_IMAGE 0x40000000UL
+#define INJECTOR_MAX_IMPORT_DLLS 128UL
 
-typedef struct _AMEGER_PE_INFO {
+typedef struct _INJECTOR_PE_INFO {
 
     ULONG  SizeOfHeaders;
     ULONG  BaseRelocRva;
@@ -19,20 +19,20 @@ typedef struct _AMEGER_PE_INFO {
     BOOLEAN HasImports;
     UINT64 PreferredBase;
     UINT32 SizeOfImage;
-} AMEGER_PE_INFO, *PAMEGER_PE_INFO;
+} INJECTOR_PE_INFO, *PINJECTOR_PE_INFO;
 
-NTSTATUS AmegerValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
+NTSTATUS InjectorValidatePe(_In_reads_bytes_(Size) const UINT8 *Buf,
                           _In_ SIZE_T Size,
-                          _Out_ PAMEGER_PE_INFO Out);
+                          _Out_ PINJECTOR_PE_INFO Out);
 
-NTSTATUS AmegerApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
+NTSTATUS InjectorApplyRelocations(_Inout_updates_bytes_(Size) UINT8 *ImageBuf,
                                 _In_ SIZE_T Size,
-                                _In_ const AMEGER_PE_INFO *Info,
+                                _In_ const INJECTOR_PE_INFO *Info,
                                 _In_ UINT_PTR Delta);
 
-NTSTATUS AmegerWalkImports(_In_ const UINT8 *ImageBuf,
+NTSTATUS InjectorWalkImports(_In_ const UINT8 *ImageBuf,
                            _In_ SIZE_T Size,
-                           _Inout_ PAMEGER_PE_INFO Info);
+                           _Inout_ PINJECTOR_PE_INFO Info);
 
-PIMAGE_NT_HEADERS64 AmegerGetNtHeaders(_In_reads_bytes_(Size) const UINT8 *Buf,
+PIMAGE_NT_HEADERS64 InjectorGetNtHeaders(_In_reads_bytes_(Size) const UINT8 *Buf,
                                        _In_ SIZE_T Size);

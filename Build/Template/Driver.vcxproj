@@ -35,20 +35,20 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(AmegerChannelMagic)'==''">
-    <AmegerChannelMagic>0xA7E3C1D9F042B685</AmegerChannelMagic>
+  <PropertyGroup Condition="'$(InjectorChannelMagic)'==''">
+    <InjectorChannelMagic>0xA7E3C1D9F042B685</InjectorChannelMagic>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(AmegerPoolTag)'==''">
-    <AmegerPoolTag>'sfTN'</AmegerPoolTag>
+  <PropertyGroup Condition="'$(InjectorPoolTag)'==''">
+    <InjectorPoolTag>'sfTN'</InjectorPoolTag>
   </PropertyGroup>
   <PropertyGroup Condition="'$(ClientName)'==''">
     <ClientName>Client.exe</ClientName>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(AmegerPdataRva)'==''">
-    <AmegerPdataRva>0x0</AmegerPdataRva>
+  <PropertyGroup Condition="'$(InjectorPdataRva)'==''">
+    <InjectorPdataRva>0x0</InjectorPdataRva>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(AmegerPdataSize)'==''">
-    <AmegerPdataSize>0x0</AmegerPdataSize>
+  <PropertyGroup Condition="'$(InjectorPdataSize)'==''">
+    <InjectorPdataSize>0x0</InjectorPdataSize>
   </PropertyGroup>
   <PropertyGroup>
     <OutDir>$(ProjectDir)..\..\Assets\Driver\</OutDir>
@@ -67,7 +67,7 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <ExceptionHandling>false</ExceptionHandling>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
-      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;NDEBUG;AMEGER_CHANNEL_MAGIC=$(AmegerChannelMagic);AMEGER_POOL_TAG=$(AmegerPoolTag);AMEGER_CLIENT_IMAGE_NAME="$(ClientName)";AMEGER_PDATA_RVA=$(AmegerPdataRva);AMEGER_PDATA_SIZE=$(AmegerPdataSize);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;NDEBUG;INJECTOR_CHANNEL_MAGIC=$(InjectorChannelMagic);INJECTOR_POOL_TAG=$(InjectorPoolTag);INJECTOR_CLIENT_IMAGE_NAME="$(ClientName)";INJECTOR_PDATA_RVA=$(InjectorPdataRva);INJECTOR_PDATA_SIZE=$(InjectorPdataSize);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <AdditionalIncludeDirectories>$(ProjectDir)..\..\Driver;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>

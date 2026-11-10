@@ -3,44 +3,44 @@
 #include "../../../NT/Definitions.h"
 #include "../../../TLS/TLS.h"
 
-extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
+extern VOID InjectorDiagLog(_In_ PCSTR Format, ...);
 
-#define AMEGER_POLL_PERIOD_MS  1000
+#define INJECTOR_POLL_PERIOD_MS  1000
 
-static PAMEGER_POLL_STATE g_PollState = NULL;
+static PINJECTOR_POLL_STATE g_PollState = NULL;
 static volatile LONG      g_PollInit = 0;
 
-static VOID AmegerPollDpc(_In_ KDPC *Dpc, _In_opt_ PVOID Ctx,
+static VOID InjectorPollDpc(_In_ KDPC *Dpc, _In_opt_ PVOID Ctx,
                           _In_opt_ PVOID A1, _In_opt_ PVOID A2);
-static VOID AmegerPollWorker(_In_ PVOID Ctx);
+static VOID InjectorPollWorker(_In_ PVOID Ctx);
 
-PAMEGER_POLL_STATE
-AmegerPollGetState(VOID)
+PINJECTOR_POLL_STATE
+InjectorPollGetState(VOID)
 {
     return g_PollState;
 }
 
 NTSTATUS
-AmegerPollInitialize(VOID)
+InjectorPollInitialize(VOID)
 {
     LARGE_INTEGER due;
 
     if (InterlockedCompareExchange(&g_PollInit, 0, 0) != 0)
         return STATUS_ALREADY_REGISTERED;
 
-    g_PollState = (PAMEGER_POLL_STATE)ExAllocatePool2(
-        POOL_FLAG_NON_PAGED, sizeof(AMEGER_POLL_STATE), AMEGER_TAG_CHANNEL);
+    g_PollState = (PINJECTOR_POLL_STATE)ExAllocatePool2(
+        POOL_FLAG_NON_PAGED, sizeof(INJECTOR_POLL_STATE), INJECTOR_TAG_CHANNEL);
     if (g_PollState == NULL) {
         return STATUS_INSUFFICIENT_RESOURCES;
     }
-    RtlZeroMemory(g_PollState, sizeof(AMEGER_POLL_STATE));
+    RtlZeroMemory(g_PollState, sizeof(INJECTOR_POLL_STATE));
 
     KeInitializeTimerEx(&g_PollState->Timer, NotificationTimer);
-    KeInitializeDpc(&g_PollState->Dpc, AmegerPollDpc, NULL);
-    ExInitializeWorkItem(&g_PollState->WorkItem, AmegerPollWorker, NULL);
+    KeInitializeDpc(&g_PollState->Dpc, InjectorPollDpc, NULL);
+    ExInitializeWorkItem(&g_PollState->WorkItem, InjectorPollWorker, NULL);
 
-    due.QuadPart = -(LONGLONG)AMEGER_POLL_PERIOD_MS * 10000LL;
-    KeSetTimerEx(&g_PollState->Timer, due, AMEGER_POLL_PERIOD_MS, &g_PollState->Dpc);
+    due.QuadPart = -(LONGLONG)INJECTOR_POLL_PERIOD_MS * 10000LL;
+    KeSetTimerEx(&g_PollState->Timer, due, INJECTOR_POLL_PERIOD_MS, &g_PollState->Dpc);
     InterlockedExchange(&g_PollState->Armed, 1);
 
     InterlockedExchange(&g_PollInit, 1);
@@ -48,9 +48,9 @@ AmegerPollInitialize(VOID)
 }
 
 VOID
-AmegerPollShutdown(VOID)
+InjectorPollShutdown(VOID)
 {
-    PAMEGER_POLL_STATE st = g_PollState;
+    PINJECTOR_POLL_STATE st = g_PollState;
 
     if (InterlockedCompareExchange(&g_PollInit, 0, 0) == 0)
         return;
@@ -69,16 +69,16 @@ AmegerPollShutdown(VOID)
                 break;
             KeStallExecutionProcessor(10000);
         }
-        ExFreePoolWithTag(st, AMEGER_TAG_CHANNEL);
+        ExFreePoolWithTag(st, INJECTOR_TAG_CHANNEL);
         g_PollState = NULL;
     }
 }
 
 static VOID
-AmegerPollDpc(_In_ KDPC *Dpc, _In_opt_ PVOID Ctx,
+InjectorPollDpc(_In_ KDPC *Dpc, _In_opt_ PVOID Ctx,
               _In_opt_ PVOID A1, _In_opt_ PVOID A2)
 {
-    PAMEGER_POLL_STATE st = AmegerPollGetState();
+    PINJECTOR_POLL_STATE st = InjectorPollGetState();
 
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(Ctx);
@@ -97,9 +97,9 @@ AmegerPollDpc(_In_ KDPC *Dpc, _In_opt_ PVOID Ctx,
 }
 
 static VOID
-AmegerPollWorker(_In_ PVOID Ctx)
+InjectorPollWorker(_In_ PVOID Ctx)
 {
-    PAMEGER_POLL_STATE st = AmegerPollGetState();
+    PINJECTOR_POLL_STATE st = InjectorPollGetState();
 
     UNREFERENCED_PARAMETER(Ctx);
 
@@ -116,7 +116,7 @@ AmegerPollWorker(_In_ PVOID Ctx)
         return;
     }
 
-    AmegerDiagLog("[Poll] worker entry: irql=%u init=%ld pending=%ld\n",
+    InjectorDiagLog("[Poll] worker entry: irql=%u init=%ld pending=%ld\n",
                   (unsigned)KeGetCurrentIrql(),
                   (long)InterlockedCompareExchange(&g_PollInit, 0, 0),
                   (long)InterlockedCompareExchange(&st->WorkPending, 0, 0));
@@ -127,17 +127,17 @@ AmegerPollWorker(_In_ PVOID Ctx)
     }
 
     {
-        NTSTATUS mapStatus = AmegerChannelMapExisting();
-        AmegerDiagLog("[Poll] MapExisting returned 0x%08X\n", mapStatus);
+        NTSTATUS mapStatus = InjectorChannelMapExisting();
+        InjectorDiagLog("[Poll] MapExisting returned 0x%08X\n", mapStatus);
     }
 
-    AmegerTlsNotifyTick();
-    if (AmegerTlsIsActive()) {
-        UINT32 pid = AmegerTlsGetTargetPid();
+    InjectorTlsNotifyTick();
+    if (InjectorTlsIsActive()) {
+        UINT32 pid = InjectorTlsGetTargetPid();
         if (pid != 0) {
             PEPROCESS proc = NULL;
             if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)(ULONG_PTR)pid, &proc))) {
-                AmegerTlsPollProcess(proc);
+                InjectorTlsPollProcess(proc);
                 ObDereferenceObject(proc);
             }
         }

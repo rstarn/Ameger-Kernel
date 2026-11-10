@@ -6,20 +6,20 @@
 #include "TLS/TLS.h"
 #include "Stealth/ObCallback.h"
 
-static AMEGER_EXPORTS g_Exports;
+static INJECTOR_EXPORTS g_Exports;
 
 static VOID
-AmegerDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
+InjectorDriverUnload(_In_ PDRIVER_OBJECT DriverObject)
 {
     UNREFERENCED_PARAMETER(DriverObject);
 
-    AmegerCommandShutdown();
-    AmegerPollShutdown();
+    InjectorCommandShutdown();
+    InjectorPollShutdown();
 
-    AmegerTlsUnregisterNotify();
-    AmegerObCallbackShutdown();
-    AmegerChannelDestroy();
-    AmegerExportsDestroy(&g_Exports);
+    InjectorTlsUnregisterNotify();
+    InjectorObCallbackShutdown();
+    InjectorChannelDestroy();
+    InjectorExportsDestroy(&g_Exports);
 }
 
 NTSTATUS
@@ -36,16 +36,16 @@ DriverEntry(_In_ PDRIVER_OBJECT DriverObject,
         UNICODE_STRING logPath;
         OBJECT_ATTRIBUTES oa;
         RtlInitUnicodeString(&logPath,
-                             L"\\SystemRoot\\Temp\\ameger_diag.log");
+                             L"\\SystemRoot\\Temp\\injector_diag.log");
         InitializeObjectAttributes(&oa, &logPath,
                                    OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
                                    NULL, NULL);
         (void)ZwDeleteFile(&oa);
     }
 
-    DriverObject->DriverUnload = AmegerDriverUnload;
+    DriverObject->DriverUnload = InjectorDriverUnload;
 
-    status = AmegerExportsInitialize(&g_Exports);
+    status = InjectorExportsInitialize(&g_Exports);
     if (!NT_SUCCESS(status)) {
 #if DBG
         DbgPrint("[Driver] exports init failed: 0x%08X\n", status);
@@ -53,28 +53,28 @@ DriverEntry(_In_ PDRIVER_OBJECT DriverObject,
         return status;
     }
 
-    status = AmegerChannelInitialize();
+    status = InjectorChannelInitialize();
     if (!NT_SUCCESS(status)) {
 #if DBG
         DbgPrint("[Driver] channel init failed: 0x%08X\n", status);
 #endif
-        AmegerExportsDestroy(&g_Exports);
+        InjectorExportsDestroy(&g_Exports);
         return status;
     }
 
-    (void)AmegerChannelMapExisting();
+    (void)InjectorChannelMapExisting();
 
-    status = AmegerCommandInitialize();
+    status = InjectorCommandInitialize();
     if (!NT_SUCCESS(status)) {
 #if DBG
         DbgPrint("[Driver] command init failed: 0x%08X\n", status);
 #endif
-        AmegerChannelDestroy();
-        AmegerExportsDestroy(&g_Exports);
+        InjectorChannelDestroy();
+        InjectorExportsDestroy(&g_Exports);
         return status;
     }
 
-    status = AmegerPollInitialize();
+    status = InjectorPollInitialize();
     if (!NT_SUCCESS(status)) {
 #if DBG
         DbgPrint("[Driver] poll init failed: 0x%08X\n", status);
@@ -82,7 +82,7 @@ DriverEntry(_In_ PDRIVER_OBJECT DriverObject,
 
     }
 
-    status = AmegerObCallbackInitialize(&g_Exports);
+    status = InjectorObCallbackInitialize(&g_Exports);
     if (!NT_SUCCESS(status)) {
 #if DBG
         DbgPrint("[Driver] ob callback init failed: 0x%08X (non-fatal)\n", status);

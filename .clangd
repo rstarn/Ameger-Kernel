@@ -1,4 +1,4 @@
-# Editor/clangd configuration for Ameger-Kernel (MSBuild+WDK project).
+# Editor/clangd configuration for Injector-Kernel (MSBuild+WDK project).
 # The authoritative build is `Build\Executors\Create.bat` / MSBuild with WDK.
 # This file reduces false diagnostics in editors; it does not replace the build.
 
@@ -20,11 +20,11 @@ CompileFlags:
     - -D_WIN32_WINNT=0x0A00
     - -DUNICODE
     - -D_UNICODE
-    - -DAMEGER_CHANNEL_MAGIC=0xA7E3C1D9F042B685ULL
-    - -DAMEGER_POOL_TAG='sfTN'
-    - '-DAMEGER_CLIENT_IMAGE_NAME="Client.exe"'
-    - -DAMEGER_PDATA_RVA=0x0
-    - -DAMEGER_PDATA_SIZE=0x0
+    - -DINJECTOR_CHANNEL_MAGIC=0xA7E3C1D9F042B685ULL
+    - -DINJECTOR_POOL_TAG='sfTN'
+    - '-DINJECTOR_CLIENT_IMAGE_NAME="Client.exe"'
+    - -DINJECTOR_PDATA_RVA=0x0
+    - -DINJECTOR_PDATA_SIZE=0x0
     - -I.
     - -IDriver
     - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/km"
@@ -57,8 +57,8 @@ CompileFlags:
     - -DUNICODE
     - -D_UNICODE
     - -DWIN32_LEAN_AND_MEAN
-    - -DAMEGER_CHANNEL_MAGIC=0xA7E3C1D9F042B685ULL
-    - -DAMEGER_CHANNEL_USER_VA=0x00007FF000000000ULL
+    - -DINJECTOR_CHANNEL_MAGIC=0xA7E3C1D9F042B685ULL
+    - -DINJECTOR_CHANNEL_USER_VA=0x00007FF000000000ULL
     - -I.
     - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/um"
     - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/shared"

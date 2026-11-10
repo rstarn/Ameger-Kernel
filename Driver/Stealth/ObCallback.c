@@ -33,15 +33,15 @@
 #define STATUS_OBJECT_NAME_COLLISION            ((NTSTATUS)0xC0000035u)
 #endif
 
-extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
+extern VOID InjectorDiagLog(_In_ PCSTR Format, ...);
 
-static PAMEGER_EXPORTS g_Exports = NULL;
+static PINJECTOR_EXPORTS g_Exports = NULL;
 static PVOID           g_ProcRegHandle = NULL;
 static PVOID           g_ThreadRegHandle = NULL;
 static volatile LONG   g_ProtectedPid = 0;
 static volatile UINT64 g_GadgetVa = 0;
 
-#define AMEGER_CR0_WP 0x00010000ULL
+#define INJECTOR_CR0_WP 0x00010000ULL
 
 typedef struct _EXEC_SECTION {
     UINT8  *Base;
@@ -81,7 +81,7 @@ EnumerExecutableSections(_In_ PVOID ImageBase,
 }
 
 static PVOID
-ResolveVerifyFunction(_In_ PAMEGER_EXPORTS Exports)
+ResolveVerifyFunction(_In_ PINJECTOR_EXPORTS Exports)
 {
 
     static const UINT8 kSitePattern[6] = { 0xBA, 0x20, 0x00, 0x00, 0x00, 0xE8 };
@@ -100,7 +100,7 @@ ResolveVerifyFunction(_In_ PAMEGER_EXPORTS Exports)
 
     execCount = EnumerExecutableSections(Exports->NtoskrnlBase, execs, ARRAYSIZE(execs));
     if (execCount == 0) {
-        AmegerDiagLog("[ObInit] no executable sections in ntoskrnl - gadget path\n");
+        InjectorDiagLog("[ObInit] no executable sections in ntoskrnl - gadget path\n");
         return NULL;
     }
 
@@ -131,7 +131,7 @@ ResolveVerifyFunction(_In_ PAMEGER_EXPORTS Exports)
         }
         if (j == candidateCount) {
             if (candidateCount >= ARRAYSIZE(candidates)) {
-                AmegerDiagLog("[ObInit] verify anchor overflow - gadget path\n");
+                InjectorDiagLog("[ObInit] verify anchor overflow - gadget path\n");
                 return NULL;
             }
             candidates[candidateCount] = target;
@@ -141,12 +141,12 @@ ResolveVerifyFunction(_In_ PAMEGER_EXPORTS Exports)
     }
 
     for (i = 0; i < candidateCount; i++) {
-        AmegerDiagLog("[ObInit] verify anchor candidate=%p hits=%llu\n",
+        InjectorDiagLog("[ObInit] verify anchor candidate=%p hits=%llu\n",
                       candidates[i], (unsigned long long)counts[i]);
     }
 
     if (candidateCount != 1) {
-        AmegerDiagLog("[ObInit] anchor did not resolve to exactly one function (%u) - gadget path\n",
+        InjectorDiagLog("[ObInit] anchor did not resolve to exactly one function (%u) - gadget path\n",
                       candidateCount);
         return NULL;
     }
@@ -154,15 +154,15 @@ ResolveVerifyFunction(_In_ PAMEGER_EXPORTS Exports)
 }
 
 static VOID
-AmegerWpOff(VOID)
+InjectorWpOff(VOID)
 {
-    __writecr0((unsigned __int64)__readcr0() & ~AMEGER_CR0_WP);
+    __writecr0((unsigned __int64)__readcr0() & ~INJECTOR_CR0_WP);
 }
 
 static VOID
-AmegerWpOn(VOID)
+InjectorWpOn(VOID)
 {
-    __writecr0((unsigned __int64)__readcr0() | AMEGER_CR0_WP);
+    __writecr0((unsigned __int64)__readcr0() | INJECTOR_CR0_WP);
 }
 
 static BOOLEAN
@@ -172,18 +172,18 @@ ApplyVerifyPatch(_In_ PVOID Target, _Out_writes_(9) UINT8 Saved[9])
 
     if (Target == NULL) return FALSE;
     RtlCopyMemory(Saved, Target, 8);
-    AmegerWpOff();
+    InjectorWpOff();
     RtlCopyMemory(Target, patch, 8);
-    AmegerWpOn();
+    InjectorWpOn();
     return RtlCompareMemory(Target, patch, 8) == 8;
 }
 
 static BOOLEAN
 RestoreVerifyPatch(_In_ PVOID Target, _In_reads_(9) const UINT8 Saved[9])
 {
-    AmegerWpOff();
+    InjectorWpOff();
     RtlCopyMemory(Target, Saved, 8);
-    AmegerWpOn();
+    InjectorWpOn();
     return RtlCompareMemory(Target, Saved, 8) == 8;
 }
 
@@ -226,7 +226,7 @@ static UINT64 FindGadgetInModule(PVOID ModuleBase, _In_opt_ PCSTR ModuleName)
     ULONG i;
 
     if (ModuleBase == NULL) {
-        AmegerDiagLog("[Gadget] %s base NULL\n", ModuleName ? ModuleName : "?");
+        InjectorDiagLog("[Gadget] %s base NULL\n", ModuleName ? ModuleName : "?");
         return 0;
     }
     dos = (IMAGE_DOS_HEADER *)ModuleBase;
@@ -247,14 +247,14 @@ static UINT64 FindGadgetInModule(PVOID ModuleBase, _In_opt_ PCSTR ModuleName)
             if (textSize == 0) textSize = sec[i].SizeOfRawData;
             if (textSize < 8) continue;
             found = ScanForJmpRcx(text, textSize, &accepted);
-            AmegerDiagLog("[Gadget] %s sec=%u rva=0x%X size=0x%X accepted=%u found=0x%llX\n",
+            InjectorDiagLog("[Gadget] %s sec=%u rva=0x%X size=0x%X accepted=%u found=0x%llX\n",
                           ModuleName ? ModuleName : "?", (unsigned)i,
                           (unsigned)sec[i].VirtualAddress, (unsigned)textSize,
                           (unsigned)accepted, (unsigned long long)found);
             if (found) return found;
         }
     }
-    AmegerDiagLog("[Gadget] %s no FF E1 in executable sections\n", ModuleName ? ModuleName : "?");
+    InjectorDiagLog("[Gadget] %s no FF E1 in executable sections\n", ModuleName ? ModuleName : "?");
     return 0;
 }
 
@@ -369,7 +369,7 @@ static const ALTITUDE_PAIR kAltitudeLadder[] = {
     { "321000", "321001" },
 };
 
-static NTSTATUS RegisterBoth(PAMEGER_EXPORTS Exports, UINT64 GadgetVa)
+static NTSTATUS RegisterBoth(PINJECTOR_EXPORTS Exports, UINT64 GadgetVa)
 {
     UINT32 i;
     NTSTATUS status;
@@ -380,7 +380,7 @@ static NTSTATUS RegisterBoth(PAMEGER_EXPORTS Exports, UINT64 GadgetVa)
 
         status = RegisterOne(*Exports->PsProcessType, GadgetVa,
                              kAltitudeLadder[i].Proc, &g_ProcRegHandle);
-        AmegerDiagLog("[ObInit] RegisterOne(process,%s) status=0x%08X\n",
+        InjectorDiagLog("[ObInit] RegisterOne(process,%s) status=0x%08X\n",
                       kAltitudeLadder[i].Proc, (unsigned)status);
         if (!NT_SUCCESS(status)) {
             if (status == STATUS_FLT_INSTANCE_ALTITUDE_COLLISION ||
@@ -392,10 +392,10 @@ static NTSTATUS RegisterBoth(PAMEGER_EXPORTS Exports, UINT64 GadgetVa)
 
         status = RegisterOne(*Exports->PsThreadType, GadgetVa,
                              kAltitudeLadder[i].Thread, &g_ThreadRegHandle);
-        AmegerDiagLog("[ObInit] RegisterOne(thread,%s) status=0x%08X\n",
+        InjectorDiagLog("[ObInit] RegisterOne(thread,%s) status=0x%08X\n",
                       kAltitudeLadder[i].Thread, (unsigned)status);
         if (NT_SUCCESS(status)) {
-            AmegerDiagLog("[ObInit] altitudes: %s / %s\n",
+            InjectorDiagLog("[ObInit] altitudes: %s / %s\n",
                           kAltitudeLadder[i].Proc, kAltitudeLadder[i].Thread);
             return STATUS_SUCCESS;
         }
@@ -417,7 +417,7 @@ typedef struct _OB_GADGET_CANDIDATE {
     PCSTR Name;
 } OB_GADGET_CANDIDATE;
 
-NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
+NTSTATUS InjectorObCallbackInitialize(PINJECTOR_EXPORTS Exports)
 {
     NTSTATUS status;
     NTSTATUS lastStatus = STATUS_NOT_FOUND;
@@ -437,10 +437,10 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
 
     verifyTarget = ResolveVerifyFunction(Exports);
     if (verifyTarget == NULL) {
-        AmegerDiagLog("[ObInit] verify target unavailable - gadget path\n");
+        InjectorDiagLog("[ObInit] verify target unavailable - gadget path\n");
     } else {
         verifyPatched = ApplyVerifyPatch(verifyTarget, savedBytes);
-        AmegerDiagLog("[ObInit] verify patch target=%p ok=%u\n", verifyTarget, (unsigned)verifyPatched);
+        InjectorDiagLog("[ObInit] verify patch target=%p ok=%u\n", verifyTarget, (unsigned)verifyPatched);
     }
 
     if (verifyPatched) {
@@ -460,7 +460,7 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
         candidates[2].Base = Exports->StorportBase; candidates[2].Name = "storport.sys";
         candidates[3].Base = Exports->AcpiBase;     candidates[3].Name = "acpi.sys";
 
-        AmegerDiagLog("[ObInit] tcpip=%p ndis=%p storport=%p acpi=%p\n",
+        InjectorDiagLog("[ObInit] tcpip=%p ndis=%p storport=%p acpi=%p\n",
                       Exports->TcpipBase, Exports->NdisBase,
                       Exports->StorportBase, Exports->AcpiBase);
 
@@ -468,12 +468,12 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
             UINT64 gadgetVa;
 
             if (candidates[i].Base == NULL) {
-                AmegerDiagLog("[ObInit] %s base NULL - skipping\n", candidates[i].Name);
+                InjectorDiagLog("[ObInit] %s base NULL - skipping\n", candidates[i].Name);
                 continue;
             }
 
             gadgetVa = FindGadgetInModule(candidates[i].Base, candidates[i].Name);
-            AmegerDiagLog("[ObInit] gadget from %s: 0x%llX\n",
+            InjectorDiagLog("[ObInit] gadget from %s: 0x%llX\n",
                           candidates[i].Name, (unsigned long long)gadgetVa);
             if (gadgetVa == 0) {
                 lastStatus = STATUS_NOT_FOUND;
@@ -488,7 +488,7 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
                 break;
             }
 
-            AmegerDiagLog("[ObInit] register with %s gadget failed: 0x%08X - trying next module\n",
+            InjectorDiagLog("[ObInit] register with %s gadget failed: 0x%08X - trying next module\n",
                           candidates[i].Name, (unsigned)status);
             g_GadgetVa = 0;
             sawRegisterFailure = TRUE;
@@ -504,9 +504,9 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
 
     if (verifyPatched) {
         BOOLEAN restored = RestoreVerifyPatch(verifyTarget, savedBytes);
-        AmegerDiagLog("[ObInit] verify restore ok=%u\n", (unsigned)restored);
+        InjectorDiagLog("[ObInit] verify restore ok=%u\n", (unsigned)restored);
         if (!restored) {
-            AmegerDiagLog("[ObInit] FATAL: verify restore mismatch at %p - bugchecking\n",
+            InjectorDiagLog("[ObInit] FATAL: verify restore mismatch at %p - bugchecking\n",
                           verifyTarget);
             KeBugCheckEx(0x109, (ULONG_PTR)verifyTarget, 0, 0, 'AGMR');
         }
@@ -514,7 +514,7 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
 
     if (!registered) {
         NTSTATUS report = sawRegisterFailure ? registerFailure : lastStatus;
-        AmegerDiagLog("[ObInit] FAILED: no usable callback module (last status 0x%08X)\n",
+        InjectorDiagLog("[ObInit] FAILED: no usable callback module (last status 0x%08X)\n",
                       (unsigned)report);
 #if DBG
         DbgPrint("[Driver] no usable callback module (last 0x%08X)\n", report);
@@ -523,7 +523,7 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
                    "Driver: ObCallback init failed 0x%08X\n", (unsigned)report);
         g_GadgetVa = 0;
         {
-            PAMEGER_CHANNEL ch = AmegerChannelGet();
+            PINJECTOR_CHANNEL ch = InjectorChannelGet();
             if (ch != NULL) {
                 InterlockedExchange(&ch->ObInitStatus, (LONG)report);
             }
@@ -531,11 +531,11 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
         return report;
     }
 
-    AmegerDiagLog("[ObInit] OK gadget=0x%llX verifyPatched=%u procHandle=%p threadHandle=%p\n",
+    InjectorDiagLog("[ObInit] OK gadget=0x%llX verifyPatched=%u procHandle=%p threadHandle=%p\n",
                   (unsigned long long)g_GadgetVa, (unsigned)verifyPatched,
                   g_ProcRegHandle, g_ThreadRegHandle);
     {
-        PAMEGER_CHANNEL ch = AmegerChannelGet();
+        PINJECTOR_CHANNEL ch = InjectorChannelGet();
         if (ch != NULL) {
             InterlockedExchange(&ch->ObInitStatus, 0);
         }
@@ -543,7 +543,7 @@ NTSTATUS AmegerObCallbackInitialize(PAMEGER_EXPORTS Exports)
     return STATUS_SUCCESS;
 }
 
-VOID AmegerObCallbackShutdown(VOID)
+VOID InjectorObCallbackShutdown(VOID)
 {
     if (g_ThreadRegHandle) { ObUnRegisterCallbacks(g_ThreadRegHandle); g_ThreadRegHandle = NULL; }
     if (g_ProcRegHandle)   { ObUnRegisterCallbacks(g_ProcRegHandle);   g_ProcRegHandle   = NULL; }
@@ -552,20 +552,20 @@ VOID AmegerObCallbackShutdown(VOID)
     g_Exports = NULL;
 }
 
-NTSTATUS AmegerObCallbackProtectPid(UINT32 Pid)
+NTSTATUS InjectorObCallbackProtectPid(UINT32 Pid)
 {
 
     if (g_ProcRegHandle == NULL || g_ThreadRegHandle == NULL) {
-        PAMEGER_EXPORTS exportsHint = g_Exports;
+        PINJECTOR_EXPORTS exportsHint = g_Exports;
         if (exportsHint != NULL) {
-            NTSTATUS retry = AmegerObCallbackInitialize(exportsHint);
+            NTSTATUS retry = InjectorObCallbackInitialize(exportsHint);
             if (NT_SUCCESS(retry) ||
                 (g_ProcRegHandle != NULL && g_ThreadRegHandle != NULL)) {
                 InterlockedExchange(&g_ProtectedPid, (LONG)Pid);
                 return STATUS_SUCCESS;
             }
             {
-                PAMEGER_CHANNEL ch = AmegerChannelGet();
+                PINJECTOR_CHANNEL ch = InjectorChannelGet();
                 if (ch != NULL) {
                     InterlockedExchange(&ch->ObInitStatus, (LONG)retry);
                 }
@@ -578,7 +578,7 @@ NTSTATUS AmegerObCallbackProtectPid(UINT32 Pid)
     return STATUS_SUCCESS;
 }
 
-UINT64 AmegerObCallbackGetGadgetVa(VOID)
+UINT64 InjectorObCallbackGetGadgetVa(VOID)
 {
     return (UINT64)InterlockedCompareExchange64((volatile LONG64 *)&g_GadgetVa, 0, 0);
 }

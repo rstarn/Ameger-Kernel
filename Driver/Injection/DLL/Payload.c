@@ -7,7 +7,7 @@
 #include "../../Core/Communication/Mapping/Mapping.h"
 #include <ntimage.h>
 
-extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
+extern VOID InjectorDiagLog(_In_ PCSTR Format, ...);
 
 NTKERNELAPI NTSTATUS MmCopyVirtualMemory(
     _In_ PEPROCESS SourceProcess,
@@ -36,7 +36,7 @@ NTKERNELAPI PPEB PsGetProcessPeb(_In_ PEPROCESS Process);
 #endif
 
 static ULONG
-AmegerSectionProtection(_In_ ULONG Characteristics)
+InjectorSectionProtection(_In_ ULONG Characteristics)
 {
     if ((Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0) {
         if ((Characteristics & IMAGE_SCN_MEM_WRITE) != 0)
@@ -53,21 +53,21 @@ AmegerSectionProtection(_In_ ULONG Characteristics)
 }
 
 NTSTATUS
-DriverKernelValidate(_Inout_ PAMEGER_CHANNEL Ch,
+DriverKernelValidate(_Inout_ PINJECTOR_CHANNEL Ch,
                      _In_reads_bytes_(Size) const UINT8 *Buf,
                      _In_ UINT32 Size)
 {
-    AMEGER_PE_INFO info;
+    INJECTOR_PE_INFO info;
     NTSTATUS status;
 
     if (Ch == NULL || Buf == NULL || Size == 0)
         return STATUS_INVALID_PARAMETER;
 
-    status = AmegerValidatePe(Buf, Size, &info);
+    status = InjectorValidatePe(Buf, Size, &info);
     if (!NT_SUCCESS(status))
         return status;
 
-    status = AmegerWalkImports(Buf, Size, &info);
+    status = InjectorWalkImports(Buf, Size, &info);
     if (!NT_SUCCESS(status))
         return status;
 
@@ -84,11 +84,11 @@ DriverKernelValidate(_Inout_ PAMEGER_CHANNEL Ch,
 }
 
 NTSTATUS
-DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
+DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
                 _In_reads_bytes_(Size) const UINT8 *Buf,
                 _In_ UINT32 Size)
 {
-    AMEGER_PE_INFO info;
+    INJECTOR_PE_INFO info;
     PIMAGE_NT_HEADERS64 nt = NULL;
     PEPROCESS proc = NULL;
     HANDLE hSection = NULL;
@@ -104,24 +104,24 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
     NTSTATUS tlsStatus;
     ULONG i;
     const IMAGE_SECTION_HEADER *sec = NULL;
-    LONG tlsSlot = AMEGER_TLS_SLOT_INVALID;
+    LONG tlsSlot = INJECTOR_TLS_SLOT_INVALID;
     LONG tlsSeeded = 0;
 
     if (Ch == NULL || Buf == NULL || Size == 0)
         return STATUS_INVALID_PARAMETER;
 
-    status = AmegerValidatePe(Buf, Size, &info);
+    status = InjectorValidatePe(Buf, Size, &info);
     if (!NT_SUCCESS(status))
         return status;
 
-    status = AmegerWalkImports(Buf, Size, &info);
+    status = InjectorWalkImports(Buf, Size, &info);
     if (!NT_SUCCESS(status))
         return status;
 
     if (Ch->Pid == 0)
         return STATUS_INVALID_PARAMETER;
 
-    nt = AmegerGetNtHeaders(Buf, Size);
+    nt = InjectorGetNtHeaders(Buf, Size);
     if (nt == NULL)
         return STATUS_INVALID_IMAGE_FORMAT;
 
@@ -149,14 +149,14 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
                              &maxSize, PAGE_EXECUTE_READWRITE,
                              SEC_COMMIT, NULL);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[Map] ZwCreateSection failed: 0x%08X\n", status);
+        InjectorDiagLog("[Map] ZwCreateSection failed: 0x%08X\n", status);
         goto fail;
     }
 
     sysViewSize = (SIZE_T)info.SizeOfImage;
-    status = AmegerMapSectionInSystemSpace(hSection, &sysView, &sysViewSize);
+    status = InjectorMapSectionInSystemSpace(hSection, &sysView, &sysViewSize);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[Map] system view failed: 0x%08X\n", status);
+        InjectorDiagLog("[Map] system view failed: 0x%08X\n", status);
         goto fail;
     }
 
@@ -188,7 +188,7 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
                                    PROCESS_VM_OPERATION,
                                    *PsProcessType, KernelMode, &hProcess);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[Map] ObOpenObjectByPointer failed: 0x%08X\n", status);
+        InjectorDiagLog("[Map] ObOpenObjectByPointer failed: 0x%08X\n", status);
         goto fail;
     }
 
@@ -198,51 +198,51 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
                                 NULL, &remoteSize, ViewUnmap, 0,
                                 PAGE_EXECUTE_READWRITE);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[Map] ZwMapViewOfSection failed: 0x%08X\n", status);
+        InjectorDiagLog("[Map] ZwMapViewOfSection failed: 0x%08X\n", status);
         goto fail;
     }
     remoteMapped = TRUE;
 
-    AmegerDiagLog("[Map] pid=%u base=%p size=0x%X preferred=0x%llX\n",
+    InjectorDiagLog("[Map] pid=%u base=%p size=0x%X preferred=0x%llX\n",
                   (unsigned)Ch->Pid, remoteBase, info.SizeOfImage,
                   (unsigned long long)info.PreferredBase);
 
     if (info.PreferredBase != 0) {
         UINT_PTR delta = (UINT_PTR)remoteBase - (UINT_PTR)info.PreferredBase;
         if (delta != 0) {
-            status = AmegerApplyRelocations((UINT8 *)sysView,
+            status = InjectorApplyRelocations((UINT8 *)sysView,
                                             (SIZE_T)info.SizeOfImage,
                                             &info, delta);
             if (!NT_SUCCESS(status)) {
-                AmegerDiagLog("[Map] relocations failed: 0x%08X\n", status);
+                InjectorDiagLog("[Map] relocations failed: 0x%08X\n", status);
                 goto fail;
             }
         }
     }
 
-    status = AmegerResolveImports(proc, (UINT8 *)sysView,
+    status = InjectorResolveImports(proc, (UINT8 *)sysView,
                                   info.SizeOfImage);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[Map] import resolution failed: 0x%08X\n", status);
+        InjectorDiagLog("[Map] import resolution failed: 0x%08X\n", status);
         goto fail;
     }
 
-    tlsStatus = AmegerTlsSetup(proc, remoteBase, info.SizeOfImage,
+    tlsStatus = InjectorTlsSetup(proc, remoteBase, info.SizeOfImage,
                                &tlsSlot, &tlsSeeded);
     if (tlsStatus == STATUS_NOT_FOUND) {
-        AmegerDiagLog("[Map] TLS: none\n");
-        InterlockedExchange(&Ch->TlsSlot, AMEGER_TLS_SLOT_INVALID);
+        InjectorDiagLog("[Map] TLS: none\n");
+        InterlockedExchange(&Ch->TlsSlot, INJECTOR_TLS_SLOT_INVALID);
         InterlockedExchange(&Ch->TlsStatus, (LONG)STATUS_SUCCESS);
         InterlockedExchange(&Ch->TlsThreadsSeeded, 0);
     } else if (NT_SUCCESS(tlsStatus)) {
-        AmegerDiagLog("[Map] TLS: slot=%ld seeded=%ld\n",
+        InjectorDiagLog("[Map] TLS: slot=%ld seeded=%ld\n",
                       (long)tlsSlot, (long)tlsSeeded);
         InterlockedExchange(&Ch->TlsSlot, tlsSlot);
         InterlockedExchange(&Ch->TlsStatus, (LONG)STATUS_SUCCESS);
         InterlockedExchange(&Ch->TlsThreadsSeeded, tlsSeeded);
     } else {
-        AmegerDiagLog("[Map] TLS failed: status=0x%08X\n", tlsStatus);
-        InterlockedExchange(&Ch->TlsSlot, AMEGER_TLS_SLOT_INVALID);
+        InjectorDiagLog("[Map] TLS failed: status=0x%08X\n", tlsStatus);
+        InterlockedExchange(&Ch->TlsSlot, INJECTOR_TLS_SLOT_INVALID);
         InterlockedExchange(&Ch->TlsStatus, (LONG)tlsStatus);
         InterlockedExchange(&Ch->TlsThreadsSeeded, 0);
         status = tlsStatus;
@@ -260,14 +260,14 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
             status = ZwProtectVirtualMemory(hProcess, &addr, &sz,
                                             PAGE_READONLY, &oldProt);
             if (!NT_SUCCESS(status)) {
-                AmegerDiagLog("[Map] protect headers failed: 0x%08X\n", status);
+                InjectorDiagLog("[Map] protect headers failed: 0x%08X\n", status);
                 goto fail;
             }
         }
     }
 
     for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
-        ULONG prot = AmegerSectionProtection(sec[i].Characteristics);
+        ULONG prot = InjectorSectionProtection(sec[i].Characteristics);
         PVOID addr;
         SIZE_T sz;
         ULONG oldProt = 0;
@@ -279,7 +279,7 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
             continue;
 
         if (prot == PAGE_EXECUTE_READWRITE) {
-            AmegerDiagLog("[Map] refusing RWX section %u\n", i);
+            InjectorDiagLog("[Map] refusing RWX section %u\n", i);
             status = STATUS_INVALID_IMAGE_FORMAT;
             goto fail;
         }
@@ -287,7 +287,7 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
         addr = (PUINT8)remoteBase + sec[i].VirtualAddress;
         status = ZwProtectVirtualMemory(hProcess, &addr, &sz, prot, &oldProt);
         if (!NT_SUCCESS(status)) {
-            AmegerDiagLog("[Map] protect section %u (0x%X) failed: 0x%08X\n",
+            InjectorDiagLog("[Map] protect section %u (0x%X) failed: 0x%08X\n",
                           i, prot, status);
             goto fail;
         }
@@ -298,9 +298,9 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
         ULONG gRva = 0;
         NTSTATUS instStatus;
 
-        instStatus = AmegerFindImageExport((UINT8 *)sysView,
+        instStatus = InjectorFindImageExport((UINT8 *)sysView,
                                            info.SizeOfImage,
-                                           "g_AmegerTlsInstall", &gRva);
+                                           "g_InjectorTlsInstall", &gRva);
         if (NT_SUCCESS(instStatus) &&
             (UINT64)gRva + sizeof(inst) <= (UINT64)info.SizeOfImage) {
             PVOID tlsBlock = NULL;
@@ -308,25 +308,25 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
             ULONGLONG check[2] = { 0, 0 };
 
             if (tlsStatus == STATUS_SUCCESS &&
-                NT_SUCCESS(AmegerTlsGetInstall(proc, &tlsBlock, &instSlot))) {
+                NT_SUCCESS(InjectorTlsGetInstall(proc, &tlsBlock, &instSlot))) {
                 inst[0] = (ULONGLONG)(ULONG_PTR)tlsBlock;
                 inst[1] = (ULONGLONG)(ULONG)instSlot;
             }
             RtlCopyMemory((PUINT8)sysView + gRva, inst, sizeof(inst));
             RtlCopyMemory(check, (PUINT8)sysView + gRva, sizeof(check));
             if (check[0] != inst[0] || check[1] != inst[1]) {
-                AmegerDiagLog("[Map] g_AmegerTlsInstall write verification FAILED "
+                InjectorDiagLog("[Map] g_InjectorTlsInstall write verification FAILED "
                               "(expected {%llx,%llx}, got {%llx,%llx})\n",
                               inst[0], inst[1], check[0], check[1]);
                 status = STATUS_UNSUCCESSFUL;
                 goto fail;
             }
-            AmegerDiagLog("[Map] g_AmegerTlsInstall <- block=0x%p slot=%ld (tlsStatus=0x%08X) verified\n",
+            InjectorDiagLog("[Map] g_InjectorTlsInstall <- block=0x%p slot=%ld (tlsStatus=0x%08X) verified\n",
                           (PVOID)(ULONG_PTR)inst[0],
                           inst[1] == 0xFFFFFFFFFFFFFFFFULL ? -1 : (LONG)inst[1],
                           tlsStatus);
         } else {
-            AmegerDiagLog("[Map] g_AmegerTlsInstall export not found (0x%08X)\n",
+            InjectorDiagLog("[Map] g_InjectorTlsInstall export not found (0x%08X)\n",
                           instStatus);
         }
     }
@@ -337,42 +337,42 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
         ULONG imgRva = 0;
         NTSTATUS imgStatus;
 
-        imgStatus = AmegerFindImageExport((UINT8 *)sysView,
+        imgStatus = InjectorFindImageExport((UINT8 *)sysView,
                                           info.SizeOfImage,
-                                          "g_AmegerImageBase", &imgRva);
+                                          "g_InjectorImageBase", &imgRva);
         if (NT_SUCCESS(imgStatus) &&
             (UINT64)imgRva + sizeof(baseVal) <= (UINT64)info.SizeOfImage) {
             RtlCopyMemory((PUINT8)sysView + imgRva, &baseVal, sizeof(baseVal));
             RtlCopyMemory(&probe, (PUINT8)sysView + imgRva, sizeof(probe));
             if (probe != baseVal) {
-                AmegerDiagLog("[Map] g_AmegerImageBase write verification FAILED "
+                InjectorDiagLog("[Map] g_InjectorImageBase write verification FAILED "
                               "(expected 0x%llx, got 0x%llx)\n",
                               baseVal, probe);
                 status = STATUS_UNSUCCESSFUL;
                 goto fail;
             } else {
-                AmegerDiagLog("[Map] g_AmegerImageBase <- base=0x%llx verified\n",
+                InjectorDiagLog("[Map] g_InjectorImageBase <- base=0x%llx verified\n",
                               baseVal);
             }
         } else {
-            AmegerDiagLog("[Map] g_AmegerImageBase export not found (0x%08X)\n",
+            InjectorDiagLog("[Map] g_InjectorImageBase export not found (0x%08X)\n",
                           imgStatus);
         }
     }
 
     {
-        const UINT64 chVa  = (UINT64)AMEGER_CHANNEL_USER_VA;
-        const UINT64 chEnd = chVa + (UINT64)AMEGER_CHANNEL_TOTAL_SIZE;
+        const UINT64 chVa  = (UINT64)INJECTOR_CHANNEL_USER_VA;
+        const UINT64 chEnd = chVa + (UINT64)INJECTOR_CHANNEL_TOTAL_SIZE;
         const UINT64 pBase = (UINT64)(ULONG_PTR)remoteBase;
         const UINT64 pEnd  = pBase + (UINT64)info.SizeOfImage;
 
         if (pBase < chEnd && pEnd > chVa) {
-            AmegerDiagLog("[Map] channel map skipped: payload [0x%llX,0x%llX) "
+            InjectorDiagLog("[Map] channel map skipped: payload [0x%llX,0x%llX) "
                           "covers channel VA 0x%llX; SelfTestAck will not work\n",
                           pBase, pEnd, chVa);
         } else {
-            NTSTATUS chMapStatus = AmegerChannelMapIntoProcess(proc);
-            AmegerDiagLog("[Map] channel map into target: 0x%08X\n", chMapStatus);
+            NTSTATUS chMapStatus = InjectorChannelMapIntoProcess(proc);
+            InjectorDiagLog("[Map] channel map into target: 0x%08X\n", chMapStatus);
         }
     }
 
@@ -383,9 +383,9 @@ DriverKernelMap(_Inout_ PAMEGER_CHANNEL Ch,
     InterlockedExchange64((volatile LONG64 *)&Ch->ImportDllCount,
                           (LONG64)info.ImportDllCount);
 
-    AmegerDiagLog("[Map] success: base=%p\n", remoteBase);
+    InjectorDiagLog("[Map] success: base=%p\n", remoteBase);
 
-    AmegerUnmapSectionInSystemSpace(sysView);
+    InjectorUnmapSectionInSystemSpace(sysView);
     ZwClose(hSection);
     ZwClose(hProcess);
     ObDereferenceObject(proc);
@@ -395,7 +395,7 @@ fail:
     if (remoteMapped && hProcess != NULL)
         (void)ZwUnmapViewOfSection(hProcess, remoteBase);
     if (sysView != NULL)
-        AmegerUnmapSectionInSystemSpace(sysView);
+        InjectorUnmapSectionInSystemSpace(sysView);
     if (hSection != NULL)
         ZwClose(hSection);
     if (hProcess != NULL)
@@ -405,7 +405,7 @@ fail:
 }
 
 NTSTATUS
-DriverKernelExec(_Inout_ PAMEGER_CHANNEL Ch)
+DriverKernelExec(_Inout_ PINJECTOR_CHANNEL Ch)
 {
     PEPROCESS proc = NULL;
     UINT32 pid;

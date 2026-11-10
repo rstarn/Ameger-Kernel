@@ -3,7 +3,7 @@
 #include <ntifs.h>
 #include <ntimage.h>
 
-extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
+extern VOID InjectorDiagLog(_In_ PCSTR Format, ...);
 
 NTKERNELAPI PVOID PsGetThreadTeb(_In_ PETHREAD Thread);
 NTKERNELAPI NTSTATUS PsGetContextThread(
@@ -28,36 +28,36 @@ NTKERNELAPI VOID NTAPI KeAlertThread(_In_ PKTHREAD Thread);
 #define PROCESS_VM_OPERATION 0x0008
 #endif
 
-#define AMEGER_THREAD_STATE_RUNNING      2
-#define AMEGER_THREAD_STATE_TERMINATED  4
-#define AMEGER_THREAD_STATE_WAITING     5
+#define INJECTOR_THREAD_STATE_RUNNING      2
+#define INJECTOR_THREAD_STATE_TERMINATED  4
+#define INJECTOR_THREAD_STATE_WAITING     5
 
-#define AMEGER_WAIT_REASON_DELAY_EXECUTION  4
-#define AMEGER_WAIT_REASON_USER_REQUEST     6
+#define INJECTOR_WAIT_REASON_DELAY_EXECUTION  4
+#define INJECTOR_WAIT_REASON_USER_REQUEST     6
 
-#define AMEGER_USER_MIN 0x10000ULL
-#define AMEGER_USER_MAX 0x00007FFFFFFF0000ULL
+#define INJECTOR_USER_MIN 0x10000ULL
+#define INJECTOR_USER_MAX 0x00007FFFFFFF0000ULL
 
-#define AMEGER_MAX_CANDIDATES 32
+#define INJECTOR_MAX_CANDIDATES 32
 
-typedef struct _AMEGER_CANDIDATE {
+typedef struct _INJECTOR_CANDIDATE {
     ULONG Tid;
     ULONG State;
     ULONG WaitReason;
     LONG Score;
-} AMEGER_CANDIDATE, *PAMEGER_CANDIDATE;
+} INJECTOR_CANDIDATE, *PINJECTOR_CANDIDATE;
 
 static LONG
-AmegerThreadScore(_In_ ULONG State, _In_ ULONG WaitReason)
+InjectorThreadScore(_In_ ULONG State, _In_ ULONG WaitReason)
 {
-    if (State == AMEGER_THREAD_STATE_TERMINATED)
+    if (State == INJECTOR_THREAD_STATE_TERMINATED)
         return -1;
 
-    if (State == AMEGER_THREAD_STATE_WAITING) {
+    if (State == INJECTOR_THREAD_STATE_WAITING) {
         switch (WaitReason) {
-        case AMEGER_WAIT_REASON_USER_REQUEST:
+        case INJECTOR_WAIT_REASON_USER_REQUEST:
             return 5;
-        case AMEGER_WAIT_REASON_DELAY_EXECUTION:
+        case INJECTOR_WAIT_REASON_DELAY_EXECUTION:
             return 4;
         case 5:
         case 7:
@@ -66,17 +66,17 @@ AmegerThreadScore(_In_ ULONG State, _In_ ULONG WaitReason)
             return 2;
         }
     }
-    if (State == AMEGER_THREAD_STATE_RUNNING)
+    if (State == INJECTOR_THREAD_STATE_RUNNING)
         return 1;
     return -1;
 }
 
 static ULONG
-AmegerGatherCandidates(_In_ PEPROCESS Target,
-                       _Out_writes_(AMEGER_MAX_CANDIDATES) PAMEGER_CANDIDATE Out,
+InjectorGatherCandidates(_In_ PEPROCESS Target,
+                       _Out_writes_(INJECTOR_MAX_CANDIDATES) PINJECTOR_CANDIDATE Out,
                        _Out_ PULONG OutCount, _Out_ PULONG OutTotal)
 {
-    PAMEGER_THREAD_ENTRY entries = NULL;
+    PINJECTOR_THREAD_ENTRY entries = NULL;
     ULONG count = 0;
     ULONG i;
     ULONG n = 0;
@@ -84,13 +84,13 @@ AmegerGatherCandidates(_In_ PEPROCESS Target,
     *OutCount = 0;
     *OutTotal = 0;
 
-    if (!NT_SUCCESS(AmegerSnapshotThreads(
+    if (!NT_SUCCESS(InjectorSnapshotThreads(
             (ULONG)(ULONG_PTR)PsGetProcessId(Target), &entries, &count)))
         return 0;
 
     *OutTotal = count;
-    for (i = 0; i < count && n < AMEGER_MAX_CANDIDATES; i++) {
-        LONG score = AmegerThreadScore(entries[i].State, entries[i].WaitReason);
+    for (i = 0; i < count && n < INJECTOR_MAX_CANDIDATES; i++) {
+        LONG score = InjectorThreadScore(entries[i].State, entries[i].WaitReason);
 
         if (score < 0)
             continue;
@@ -101,7 +101,7 @@ AmegerGatherCandidates(_In_ PEPROCESS Target,
         Out[n].Score = score;
         n++;
     }
-    AmegerFreeThreads(entries);
+    InjectorFreeThreads(entries);
 
     for (i = 0; i < n; i++) {
         ULONG best = i;
@@ -112,7 +112,7 @@ AmegerGatherCandidates(_In_ PEPROCESS Target,
                 best = j;
         }
         if (best != i) {
-            AMEGER_CANDIDATE tmp = Out[i];
+            INJECTOR_CANDIDATE tmp = Out[i];
             Out[i] = Out[best];
             Out[best] = tmp;
         }
@@ -123,7 +123,7 @@ AmegerGatherCandidates(_In_ PEPROCESS Target,
 }
 
 static NTSTATUS
-AmegerProbeUserModeContext(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
+InjectorProbeUserModeContext(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
                            _Out_ PCONTEXT OutCtx)
 {
     HANDLE hProc = NULL;
@@ -203,7 +203,7 @@ AmegerProbeUserModeContext(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
 }
 
 static NTSTATUS
-AmegerProbeUserModeSetContext(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
+InjectorProbeUserModeSetContext(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
                               _In_ PCONTEXT Ctx)
 {
     HANDLE hProc = NULL;
@@ -260,7 +260,7 @@ AmegerProbeUserModeSetContext(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
 }
 
 static NTSTATUS
-AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
+InjectorAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
                     _In_ ULONG Tid, _In_ ULONG State, _In_ ULONG WaitReason,
                     _In_ UINT64 ExecutionVa, _In_ UINT64 RemoteBase,
                     _Out_ UINT64 *OutSlot)
@@ -283,20 +283,20 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
                                    THREAD_GET_CONTEXT |
                                    THREAD_SET_CONTEXT,
                                    *PsThreadType, KernelMode, &hThread);
-    AmegerDiagLog("[Hijack] tid=%lu state=%lu wait=%lu open status=0x%08X\n",
+    InjectorDiagLog("[Hijack] tid=%lu state=%lu wait=%lu open status=0x%08X\n",
                   Tid, State, WaitReason, status);
     if (!NT_SUCCESS(status))
         return status;
 
     status = PsGetContextThread(Thread, &ctx, KernelMode);
-    AmegerDiagLog("[Hijack] tid=%lu PsGetContextThread(km) status=0x%08X rip=0x%llX rsp=0x%llX\n",
+    InjectorDiagLog("[Hijack] tid=%lu PsGetContextThread(km) status=0x%08X rip=0x%llX rsp=0x%llX\n",
                   Tid, status,
                   (unsigned long long)ctx.Rip,
                   (unsigned long long)ctx.Rsp);
     if (!NT_SUCCESS(status)) {
-        NTSTATUS probe = AmegerProbeUserModeContext(Target, Thread, &ctx);
+        NTSTATUS probe = InjectorProbeUserModeContext(Target, Thread, &ctx);
 
-        AmegerDiagLog("[Hijack] tid=%lu probe(usermode) status=0x%08X rip=0x%llX rsp=0x%llX\n",
+        InjectorDiagLog("[Hijack] tid=%lu probe(usermode) status=0x%08X rip=0x%llX rsp=0x%llX\n",
                       Tid, probe,
                       (unsigned long long)ctx.Rip,
                       (unsigned long long)ctx.Rsp);
@@ -313,10 +313,10 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
 
     {
         BOOLEAN userRangeOk =
-            (origRip >= AMEGER_USER_MIN && origRip < AMEGER_USER_MAX &&
-             origRsp >= AMEGER_USER_MIN && origRsp < AMEGER_USER_MAX);
+            (origRip >= INJECTOR_USER_MIN && origRip < INJECTOR_USER_MAX &&
+             origRsp >= INJECTOR_USER_MIN && origRsp < INJECTOR_USER_MAX);
 
-        AmegerDiagLog("[Hijack] tid=%lu user-range check rip=0x%llX rsp=0x%llX %s\n",
+        InjectorDiagLog("[Hijack] tid=%lu user-range check rip=0x%llX rsp=0x%llX %s\n",
                       Tid, (unsigned long long)origRip,
                       (unsigned long long)origRsp,
                       userRangeOk ? "OK" : "REJECT");
@@ -339,7 +339,7 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
                                             *PsProcessType, KernelMode,
                                             &hProc);
         if (!NT_SUCCESS(allocStatus)) {
-            AmegerDiagLog("[Hijack] tid=%lu open target for stub failed: 0x%08X\n",
+            InjectorDiagLog("[Hijack] tid=%lu open target for stub failed: 0x%08X\n",
                           Tid, allocStatus);
             ZwClose(hThread);
             return allocStatus;
@@ -350,7 +350,7 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
                                               PAGE_EXECUTE_READWRITE);
         ZwClose(hProc);
         if (!NT_SUCCESS(allocStatus)) {
-            AmegerDiagLog("[Hijack] tid=%lu stub alloc failed: 0x%08X\n",
+            InjectorDiagLog("[Hijack] tid=%lu stub alloc failed: 0x%08X\n",
                           Tid, allocStatus);
             ZwClose(hThread);
             return allocStatus;
@@ -380,7 +380,7 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
             KeUnstackDetachProcess(&stackApc);
 
             if (!NT_SUCCESS(status)) {
-                AmegerDiagLog("[Hijack] tid=%lu stub write faulted: 0x%08X\n",
+                InjectorDiagLog("[Hijack] tid=%lu stub write faulted: 0x%08X\n",
                               Tid, status);
                 ZwClose(hThread);
                 return status;
@@ -389,7 +389,7 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
             returnSlotVa = (UINT_PTR)stackRsp;
         }
     }
-    AmegerDiagLog("[Hijack] tid=%lu trampoline stack at 0x%llX\n",
+    InjectorDiagLog("[Hijack] tid=%lu trampoline stack at 0x%llX\n",
                   Tid, (unsigned long long)returnSlotVa);
 
     ctx.Rcx = (DWORD64)RemoteBase;
@@ -398,16 +398,16 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
 
     if (!viaUserMode) {
         status = PsSetContextThread(Thread, &ctx, KernelMode);
-        AmegerDiagLog("[Hijack] tid=%lu PsSetContextThread(km) status=0x%08X\n",
+        InjectorDiagLog("[Hijack] tid=%lu PsSetContextThread(km) status=0x%08X\n",
                       Tid, status);
         if (!NT_SUCCESS(status)) {
-            status = AmegerProbeUserModeSetContext(Target, Thread, &ctx);
-            AmegerDiagLog("[Hijack] tid=%lu PsSetContextThread(usermode) status=0x%08X\n",
+            status = InjectorProbeUserModeSetContext(Target, Thread, &ctx);
+            InjectorDiagLog("[Hijack] tid=%lu PsSetContextThread(usermode) status=0x%08X\n",
                           Tid, status);
         }
     } else {
-        status = AmegerProbeUserModeSetContext(Target, Thread, &ctx);
-        AmegerDiagLog("[Hijack] tid=%lu PsSetContextThread(usermode) status=0x%08X\n",
+        status = InjectorProbeUserModeSetContext(Target, Thread, &ctx);
+        InjectorDiagLog("[Hijack] tid=%lu PsSetContextThread(usermode) status=0x%08X\n",
                       Tid, status);
     }
     if (!NT_SUCCESS(status)) {
@@ -416,7 +416,7 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
     }
 
     KeAlertThread((PKTHREAD)Thread);
-    AmegerDiagLog("[Hijack] tid=%lu KeAlertThread issued\n", Tid);
+    InjectorDiagLog("[Hijack] tid=%lu KeAlertThread issued\n", Tid);
 
     *OutSlot = (UINT64)returnSlotVa;
     ZwClose(hThread);
@@ -424,13 +424,13 @@ AmegerAttemptThread(_In_ PEPROCESS Target, _In_ PETHREAD Thread,
 }
 
 NTSTATUS
-DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
+DriverKernelExecute(_Inout_ PINJECTOR_CHANNEL Ch,
                     _In_ PEPROCESS Target,
                     _In_ UINT64 ExecutionVa,
                     _In_ UINT64 RemoteBase,
                     _In_ UINT32 ImageSize)
 {
-    AMEGER_CANDIDATE candidates[AMEGER_MAX_CANDIDATES];
+    INJECTOR_CANDIDATE candidates[INJECTOR_MAX_CANDIDATES];
     ULONG total = 0;
     ULONG numCandidates = 0;
     ULONG i;
@@ -442,19 +442,19 @@ DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
         return STATUS_INVALID_PARAMETER;
 
     if (ExecutionVa < RemoteBase || ExecutionVa >= RemoteBase + ImageSize) {
-        AmegerDiagLog("[Hijack] FAILED status=0x%08X (ExecutionVa out of image)\n",
+        InjectorDiagLog("[Hijack] FAILED status=0x%08X (ExecutionVa out of image)\n",
                       STATUS_INVALID_PARAMETER);
         InterlockedExchange(&Ch->HijackReserved, (LONG)STATUS_INVALID_PARAMETER);
         return STATUS_INVALID_PARAMETER;
     }
-    AmegerDiagLog("[Hijack] entry: pid=%lu ExecutionVa=0x%llX base=0x%llX size=0x%X\n",
+    InjectorDiagLog("[Hijack] entry: pid=%lu ExecutionVa=0x%llX base=0x%llX size=0x%X\n",
                   (unsigned long)(ULONG_PTR)PsGetProcessId(Target),
                   (unsigned long long)ExecutionVa,
                   (unsigned long long)RemoteBase, ImageSize);
 
-    numCandidates = AmegerGatherCandidates(Target, candidates,
+    numCandidates = InjectorGatherCandidates(Target, candidates,
                                            &numCandidates, &total);
-    AmegerDiagLog("[Hijack] gathered %lu candidates (process threads=%lu)\n",
+    InjectorDiagLog("[Hijack] gathered %lu candidates (process threads=%lu)\n",
                   numCandidates, total);
 
     {
@@ -465,11 +465,11 @@ DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
             BOOLEAN found = FALSE;
             ULONG k;
 
-            AmegerDiagLog("[Hijack] preferred tid=%lu (client hint)\n",
+            InjectorDiagLog("[Hijack] preferred tid=%lu (client hint)\n",
                           preferredTid);
             for (k = 0; k < numCandidates; k++) {
                 if (candidates[k].Tid == preferredTid) {
-                    AMEGER_CANDIDATE tmp = candidates[0];
+                    INJECTOR_CANDIDATE tmp = candidates[0];
 
                     candidates[0] = candidates[k];
                     candidates[k] = tmp;
@@ -478,26 +478,26 @@ DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
                 }
             }
             if (!found) {
-                if (numCandidates < AMEGER_MAX_CANDIDATES) {
+                if (numCandidates < INJECTOR_MAX_CANDIDATES) {
 
                     candidates[numCandidates].Tid = preferredTid;
-                    candidates[numCandidates].State = AMEGER_THREAD_STATE_WAITING;
-                    candidates[numCandidates].WaitReason = AMEGER_WAIT_REASON_USER_REQUEST;
+                    candidates[numCandidates].State = INJECTOR_THREAD_STATE_WAITING;
+                    candidates[numCandidates].WaitReason = INJECTOR_WAIT_REASON_USER_REQUEST;
                     candidates[numCandidates].Score = score10;
                     numCandidates++;
                     {
-                        AMEGER_CANDIDATE tmp = candidates[0];
+                        INJECTOR_CANDIDATE tmp = candidates[0];
                         candidates[0] = candidates[numCandidates - 1];
                         candidates[numCandidates - 1] = tmp;
                     }
                 } else {
 
                     candidates[numCandidates - 1].Tid = preferredTid;
-                    candidates[numCandidates - 1].State = AMEGER_THREAD_STATE_WAITING;
-                    candidates[numCandidates - 1].WaitReason = AMEGER_WAIT_REASON_USER_REQUEST;
+                    candidates[numCandidates - 1].State = INJECTOR_THREAD_STATE_WAITING;
+                    candidates[numCandidates - 1].WaitReason = INJECTOR_WAIT_REASON_USER_REQUEST;
                     candidates[numCandidates - 1].Score = score10;
                     {
-                        AMEGER_CANDIDATE tmp = candidates[0];
+                        INJECTOR_CANDIDATE tmp = candidates[0];
                         candidates[0] = candidates[numCandidates - 1];
                         candidates[numCandidates - 1] = tmp;
                     }
@@ -506,12 +506,12 @@ DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
         }
     }
     if (numCandidates == 0) {
-        AmegerDiagLog("[Hijack] no eligible threads (total=%lu)\n", total);
-        AmegerDiagLog("[Hijack] FAILED status=0x%08X\n", STATUS_NOT_FOUND);
+        InjectorDiagLog("[Hijack] no eligible threads (total=%lu)\n", total);
+        InjectorDiagLog("[Hijack] FAILED status=0x%08X\n", STATUS_NOT_FOUND);
         InterlockedExchange(&Ch->HijackReserved, (LONG)STATUS_NOT_FOUND);
         return STATUS_NOT_FOUND;
     }
-    AmegerDiagLog("[Hijack] %lu candidates (process threads=%lu)\n",
+    InjectorDiagLog("[Hijack] %lu candidates (process threads=%lu)\n",
                   numCandidates, total);
 
     for (i = 0; i < numCandidates; i++) {
@@ -519,27 +519,27 @@ DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
 
         if (!NT_SUCCESS(PsLookupThreadByThreadId(
                 (HANDLE)(ULONG_PTR)candidates[i].Tid, &thread))) {
-            AmegerDiagLog("[Hijack] tid=%lu lookup failed\n", candidates[i].Tid);
+            InjectorDiagLog("[Hijack] tid=%lu lookup failed\n", candidates[i].Tid);
             lastStatus = STATUS_NOT_FOUND;
             continue;
         }
 
         if (PsGetThreadProcess(thread) != Target ||
             PsGetThreadTeb(thread) == NULL) {
-            AmegerDiagLog("[Hijack] tid=%lu process/teb mismatch\n",
+            InjectorDiagLog("[Hijack] tid=%lu process/teb mismatch\n",
                           candidates[i].Tid);
             ObDereferenceObject(thread);
             continue;
         }
 
-        status = AmegerAttemptThread(Target, thread,
+        status = InjectorAttemptThread(Target, thread,
                                      candidates[i].Tid,
                                      candidates[i].State,
                                      candidates[i].WaitReason,
                                      ExecutionVa, RemoteBase, &slot);
         if (NT_SUCCESS(status)) {
             (void)slot;
-            AmegerDiagLog("[Hijack] resumed tid=%lu OK\n", candidates[i].Tid);
+            InjectorDiagLog("[Hijack] resumed tid=%lu OK\n", candidates[i].Tid);
             InterlockedExchange(&Ch->HijackThreadId, (LONG)candidates[i].Tid);
             ObDereferenceObject(thread);
             InterlockedExchange(&Ch->HijackReserved, (LONG)STATUS_SUCCESS);
@@ -547,12 +547,12 @@ DriverKernelExecute(_Inout_ PAMEGER_CHANNEL Ch,
         }
 
         lastStatus = status;
-        AmegerDiagLog("[Hijack] tid=%lu attempt failed: 0x%08X\n",
+        InjectorDiagLog("[Hijack] tid=%lu attempt failed: 0x%08X\n",
                       candidates[i].Tid, status);
         ObDereferenceObject(thread);
     }
 
-    AmegerDiagLog("[Hijack] FAILED all candidates, last=0x%08X\n", lastStatus);
+    InjectorDiagLog("[Hijack] FAILED all candidates, last=0x%08X\n", lastStatus);
     InterlockedExchange(&Ch->HijackReserved, (LONG)lastStatus);
     return lastStatus;
 }

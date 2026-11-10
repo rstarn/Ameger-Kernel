@@ -15,16 +15,16 @@ NTSYSAPI NTSTATUS NTAPI ZwQuerySystemInformation(
 #endif
 
 NTSTATUS
-AmegerSnapshotThreads(_In_ ULONG ProcessId,
-                      _Outptr_result_buffer_(*Count) PAMEGER_THREAD_ENTRY *Entries,
+InjectorSnapshotThreads(_In_ ULONG ProcessId,
+                      _Outptr_result_buffer_(*Count) PINJECTOR_THREAD_ENTRY *Entries,
                       _Out_ PULONG Count)
 {
     NTSTATUS status;
     ULONG len = 0;
     ULONG used = 0;
     ULONG offset = 0;
-    PAMEGER_SYSTEM_PROCESS_INFORMATION spi = NULL;
-    PAMEGER_SYSTEM_PROCESS_INFORMATION cur;
+    PINJECTOR_SYSTEM_PROCESS_INFORMATION spi = NULL;
+    PINJECTOR_SYSTEM_PROCESS_INFORMATION cur;
 
     if (Entries == NULL || Count == NULL)
         return STATUS_INVALID_PARAMETER;
@@ -35,19 +35,19 @@ AmegerSnapshotThreads(_In_ ULONG ProcessId,
     status = ZwQuerySystemInformation(SystemProcessInformation, NULL, 0, &len);
     if (status != STATUS_INFO_LENGTH_MISMATCH)
         return status;
-    if (len < sizeof(AMEGER_SYSTEM_PROCESS_INFORMATION))
+    if (len < sizeof(INJECTOR_SYSTEM_PROCESS_INFORMATION))
         return STATUS_INVALID_PARAMETER;
 
     len += 0x10000;
-    spi = (PAMEGER_SYSTEM_PROCESS_INFORMATION)ExAllocatePool2(
-        POOL_FLAG_PAGED, len, AMEGER_TAG_LOOKUP);
+    spi = (PINJECTOR_SYSTEM_PROCESS_INFORMATION)ExAllocatePool2(
+        POOL_FLAG_PAGED, len, INJECTOR_TAG_LOOKUP);
     if (spi == NULL)
         return STATUS_INSUFFICIENT_RESOURCES;
 
     used = len;
     status = ZwQuerySystemInformation(SystemProcessInformation, spi, len, &used);
     if (!NT_SUCCESS(status)) {
-        ExFreePoolWithTag(spi, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(spi, INJECTOR_TAG_LOOKUP);
         return status;
     }
     if (used > len)
@@ -59,23 +59,23 @@ AmegerSnapshotThreads(_In_ ULONG ProcessId,
         ULONG maxThreads;
         ULONG n;
         ULONG i;
-        PAMEGER_THREAD_ENTRY out;
+        PINJECTOR_THREAD_ENTRY out;
 
-        if (offset + FIELD_OFFSET(AMEGER_SYSTEM_PROCESS_INFORMATION, Threads) > used)
+        if (offset + FIELD_OFFSET(INJECTOR_SYSTEM_PROCESS_INFORMATION, Threads) > used)
             break;
 
-        cur = (PAMEGER_SYSTEM_PROCESS_INFORMATION)((PUINT8)spi + offset);
+        cur = (PINJECTOR_SYSTEM_PROCESS_INFORMATION)((PUINT8)spi + offset);
 
         entrySize = (cur->NextEntryOffset != 0) ? cur->NextEntryOffset
                                                 : (used - offset);
         if ((SIZE_T)entrySize <=
-            (SIZE_T)FIELD_OFFSET(AMEGER_SYSTEM_PROCESS_INFORMATION, Threads))
+            (SIZE_T)FIELD_OFFSET(INJECTOR_SYSTEM_PROCESS_INFORMATION, Threads))
             break;
 
         if ((ULONG_PTR)cur->UniqueProcessId == (ULONG_PTR)ProcessId) {
             maxThreads = (entrySize -
-                          FIELD_OFFSET(AMEGER_SYSTEM_PROCESS_INFORMATION, Threads)) /
-                         sizeof(AMEGER_SYSTEM_THREAD_INFORMATION);
+                          FIELD_OFFSET(INJECTOR_SYSTEM_PROCESS_INFORMATION, Threads)) /
+                         sizeof(INJECTOR_SYSTEM_THREAD_INFORMATION);
             n = cur->NumberOfThreads;
             if (n > maxThreads)
                 n = maxThreads;
@@ -84,9 +84,9 @@ AmegerSnapshotThreads(_In_ ULONG ProcessId,
                 break;
             }
 
-            out = (PAMEGER_THREAD_ENTRY)ExAllocatePool2(
-                POOL_FLAG_PAGED, (SIZE_T)n * sizeof(AMEGER_THREAD_ENTRY),
-                AMEGER_TAG_LOOKUP);
+            out = (PINJECTOR_THREAD_ENTRY)ExAllocatePool2(
+                POOL_FLAG_PAGED, (SIZE_T)n * sizeof(INJECTOR_THREAD_ENTRY),
+                INJECTOR_TAG_LOOKUP);
             if (out == NULL) {
                 status = STATUS_INSUFFICIENT_RESOURCES;
                 break;
@@ -112,13 +112,13 @@ AmegerSnapshotThreads(_In_ ULONG ProcessId,
         offset += cur->NextEntryOffset;
     }
 
-    ExFreePoolWithTag(spi, AMEGER_TAG_LOOKUP);
+    ExFreePoolWithTag(spi, INJECTOR_TAG_LOOKUP);
     return status;
 }
 
 VOID
-AmegerFreeThreads(_In_opt_ PAMEGER_THREAD_ENTRY Entries)
+InjectorFreeThreads(_In_opt_ PINJECTOR_THREAD_ENTRY Entries)
 {
     if (Entries != NULL)
-        ExFreePoolWithTag(Entries, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(Entries, INJECTOR_TAG_LOOKUP);
 }

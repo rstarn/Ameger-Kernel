@@ -27,7 +27,7 @@ if (-not $msbuild) { throw "MSBuild.exe not found" }
 Write-Host "Using MSBuild: $msbuild"
 
 & $msbuild "Build\Template\Client.vcxproj" /p:Configuration=$Config /p:Platform=x64 `
-  /p:AmegerChannelMagic=$channelMagic `
+  /p:InjectorChannelMagic=$channelMagic `
   /m /v:minimal
 if ($LASTEXITCODE -ne 0) { throw "Client build failed ($LASTEXITCODE)" }
 

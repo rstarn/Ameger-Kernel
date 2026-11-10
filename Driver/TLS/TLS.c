@@ -28,7 +28,7 @@ NTSYSAPI NTSTATUS NTAPI ZwProtectVirtualMemory(
     _In_ ULONG NewProtect,
     _Out_ PULONG OldProtect);
 
-extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
+extern VOID InjectorDiagLog(_In_ PCSTR Format, ...);
 
 #ifndef STATUS_PROCESS_IS_TERMINATING
 #define STATUS_PROCESS_IS_TERMINATING ((NTSTATUS)0xC000010AL)
@@ -46,25 +46,25 @@ extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
 #define CONTEXT_FULL 0x10000B
 #endif
 
-#define AMEGER_TLS_MAX_VECTORS          1024
-#define AMEGER_TLS_MAX_SLOT             1024
-#define AMEGER_TLS_MAX_TEMPLATE         0x10000
-#define AMEGER_TLS_VECTOR_HEADER        0x10
-#define AMEGER_TLS_TEB_VECTOR_OFFSET    0x58
-#define AMEGER_TLS_NOTIFY_100NS         (3ULL * 1000ULL * 10000ULL)
-#define AMEGER_TLS_CODE_SIZE            128
+#define INJECTOR_TLS_MAX_VECTORS          1024
+#define INJECTOR_TLS_MAX_SLOT             1024
+#define INJECTOR_TLS_MAX_TEMPLATE         0x10000
+#define INJECTOR_TLS_VECTOR_HEADER        0x10
+#define INJECTOR_TLS_TEB_VECTOR_OFFSET    0x58
+#define INJECTOR_TLS_NOTIFY_100NS         (3ULL * 1000ULL * 10000ULL)
+#define INJECTOR_TLS_CODE_SIZE            128
 
-#define AMEGER_USER_MIN 0x10000ULL
-#define AMEGER_USER_MAX 0x00007FFFFFFF0000ULL
+#define INJECTOR_USER_MIN 0x10000ULL
+#define INJECTOR_USER_MAX 0x00007FFFFFFF0000ULL
 
-typedef struct _AMEGER_TLS_VECTOR {
+typedef struct _INJECTOR_TLS_VECTOR {
     PVOID Va;
     ULONG Length;
-} AMEGER_TLS_VECTOR, *PAMEGER_TLS_VECTOR;
+} INJECTOR_TLS_VECTOR, *PINJECTOR_TLS_VECTOR;
 
 static volatile LONG g_TlsInit = 0;
 static HANDLE        g_TlsProcId = NULL;
-static LONG          g_TlsSlot = AMEGER_TLS_SLOT_INVALID;
+static LONG          g_TlsSlot = INJECTOR_TLS_SLOT_INVALID;
 static PUINT8        g_TlsTemplate = NULL;
 static UINT32        g_TlsTemplateSize = 0;
 static UINT32        g_TlsSizeOfZeroFill = 0;
@@ -205,19 +205,19 @@ TlsReadVector(_In_ PEPROCESS Proc, _In_ PETHREAD Thread,
         return STATUS_NOT_FOUND;
 
     status = TlsRead(Proc,
-                     (PUINT8)tebVa + AMEGER_TLS_TEB_VECTOR_OFFSET,
+                     (PUINT8)tebVa + INJECTOR_TLS_TEB_VECTOR_OFFSET,
                      &vector, sizeof(vector));
     if (!NT_SUCCESS(status))
         return status;
-    if (vector == NULL || vector == (PVOID)((PUINT8)tebVa + AMEGER_TLS_TEB_VECTOR_OFFSET))
+    if (vector == NULL || vector == (PVOID)((PUINT8)tebVa + INJECTOR_TLS_TEB_VECTOR_OFFSET))
         return STATUS_NOT_FOUND;
 
     status = TlsRead(Proc,
-                     (PUINT8)vector - AMEGER_TLS_VECTOR_HEADER,
+                     (PUINT8)vector - INJECTOR_TLS_VECTOR_HEADER,
                      &length, sizeof(length));
     if (!NT_SUCCESS(status))
         return status;
-    if (length == 0 || length > AMEGER_TLS_MAX_SLOT)
+    if (length == 0 || length > INJECTOR_TLS_MAX_SLOT)
         return STATUS_NOT_FOUND;
 
     *OutVector = vector;
@@ -227,11 +227,11 @@ TlsReadVector(_In_ PEPROCESS Proc, _In_ PETHREAD Thread,
 
 static NTSTATUS
 TlsCollectVectors(_In_ PEPROCESS Proc,
-                  _Outptr_result_buffer_(*OutCount) PAMEGER_TLS_VECTOR *OutVectors,
+                  _Outptr_result_buffer_(*OutCount) PINJECTOR_TLS_VECTOR *OutVectors,
                   _Out_ PULONG OutCount)
 {
-    PAMEGER_THREAD_ENTRY entries = NULL;
-    PAMEGER_TLS_VECTOR vectors = NULL;
+    PINJECTOR_THREAD_ENTRY entries = NULL;
+    PINJECTOR_TLS_VECTOR vectors = NULL;
     ULONG count = 0;
     ULONG found = 0;
     ULONG i;
@@ -239,22 +239,22 @@ TlsCollectVectors(_In_ PEPROCESS Proc,
     *OutVectors = NULL;
     *OutCount = 0;
 
-    if (!NT_SUCCESS(AmegerSnapshotThreads(
+    if (!NT_SUCCESS(InjectorSnapshotThreads(
             (ULONG)(ULONG_PTR)PsGetProcessId(Proc), &entries, &count)))
         return STATUS_NOT_SUPPORTED;
     if (count == 0) {
-        AmegerFreeThreads(entries);
+        InjectorFreeThreads(entries);
         return STATUS_NOT_SUPPORTED;
     }
-    if (count > AMEGER_TLS_MAX_VECTORS)
-        count = AMEGER_TLS_MAX_VECTORS;
+    if (count > INJECTOR_TLS_MAX_VECTORS)
+        count = INJECTOR_TLS_MAX_VECTORS;
 
-    vectors = (PAMEGER_TLS_VECTOR)ExAllocatePool2(
+    vectors = (PINJECTOR_TLS_VECTOR)ExAllocatePool2(
         POOL_FLAG_NON_PAGED,
-        (SIZE_T)count * sizeof(AMEGER_TLS_VECTOR),
-        AMEGER_TAG_LOOKUP);
+        (SIZE_T)count * sizeof(INJECTOR_TLS_VECTOR),
+        INJECTOR_TAG_LOOKUP);
     if (vectors == NULL) {
-        AmegerFreeThreads(entries);
+        InjectorFreeThreads(entries);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
@@ -276,10 +276,10 @@ TlsCollectVectors(_In_ PEPROCESS Proc,
         ObDereferenceObject(thread);
     }
 
-    AmegerFreeThreads(entries);
+    InjectorFreeThreads(entries);
 
     if (found == 0) {
-        ExFreePoolWithTag(vectors, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(vectors, INJECTOR_TAG_LOOKUP);
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -290,10 +290,10 @@ TlsCollectVectors(_In_ PEPROCESS Proc,
 
 static NTSTATUS
 TlsChooseSlot(_In_ PEPROCESS Proc,
-              _In_reads_(Count) const AMEGER_TLS_VECTOR *Vectors,
+              _In_reads_(Count) const INJECTOR_TLS_VECTOR *Vectors,
               _In_ ULONG Count, _Out_ ULONG *OutSlot)
 {
-    ULONG minLength = AMEGER_TLS_MAX_SLOT;
+    ULONG minLength = INJECTOR_TLS_MAX_SLOT;
     ULONG maxSlot;
     ULONG slot;
     ULONG i;
@@ -350,10 +350,10 @@ TlsAllocateBlock(_In_ PEPROCESS Proc,
     dataSize = (SIZE_T)TemplateSize + (SIZE_T)SizeOfZeroFill;
     if (dataSize == 0)
         dataSize = 1;
-    if (dataSize > AMEGER_TLS_MAX_TEMPLATE)
+    if (dataSize > INJECTOR_TLS_MAX_TEMPLATE)
         return STATUS_INVALID_IMAGE_FORMAT;
 
-    status = TlsAllocRemote(Proc, dataSize + AMEGER_TLS_VECTOR_HEADER,
+    status = TlsAllocRemote(Proc, dataSize + INJECTOR_TLS_VECTOR_HEADER,
                             PAGE_READWRITE, &base);
     if (!NT_SUCCESS(status))
         return status;
@@ -391,7 +391,7 @@ TlsInstallOne(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     PVOID block = NULL;
     SIZE_T indexOffset;
 
-    if (Slot < 0 || Slot >= AMEGER_TLS_MAX_SLOT)
+    if (Slot < 0 || Slot >= INJECTOR_TLS_MAX_SLOT)
         return STATUS_INVALID_PARAMETER;
 
     status = TlsReadVector(Proc, Thread, &vector, &length);
@@ -417,7 +417,7 @@ TlsInstallOne(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     status = TlsWrite(Proc, (PUINT8)vector + indexOffset,
                       &block, sizeof(block));
     if (!NT_SUCCESS(status)) {
-        TlsFreeRemote(Proc, (PVOID)((ULONG_PTR)block - AMEGER_TLS_VECTOR_HEADER));
+        TlsFreeRemote(Proc, (PVOID)((ULONG_PTR)block - INJECTOR_TLS_VECTOR_HEADER));
         return status;
     }
 
@@ -464,7 +464,7 @@ TlsBuildTrampoline(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     PVOID codeVa = NULL;
     PVOID vector = NULL;
     ULONG length = 0;
-    UINT8 code[AMEGER_TLS_CODE_SIZE];
+    UINT8 code[INJECTOR_TLS_CODE_SIZE];
     SIZE_T n = 0;
     SIZE_T jSelf;
     SIZE_T jNull;
@@ -475,7 +475,7 @@ TlsBuildTrampoline(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     UINT32 slotCompare;
     UINT32 slotDisp;
 
-    if (Slot < 0 || Slot >= AMEGER_TLS_MAX_SLOT)
+    if (Slot < 0 || Slot >= INJECTOR_TLS_MAX_SLOT)
         return STATUS_INVALID_PARAMETER;
 
     status = TlsReadVector(Proc, Thread, &vector, &length);
@@ -490,8 +490,8 @@ TlsBuildTrampoline(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     status = PsGetContextThread(Thread, &ctx, KernelMode);
     if (!NT_SUCCESS(status))
         return status;
-    if ((UINT_PTR)ctx.Rip < AMEGER_USER_MIN ||
-        (UINT_PTR)ctx.Rip >= AMEGER_USER_MAX)
+    if ((UINT_PTR)ctx.Rip < INJECTOR_USER_MIN ||
+        (UINT_PTR)ctx.Rip >= INJECTOR_USER_MAX)
         return STATUS_INVALID_CONTEXT;
 
     status = TlsAllocateBlock(Proc, Template, TemplateSize,
@@ -501,7 +501,7 @@ TlsBuildTrampoline(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
 
     status = TlsAllocRemote(Proc, 0x1000, PAGE_EXECUTE_READWRITE, &codeVa);
     if (!NT_SUCCESS(status)) {
-        TlsFreeRemote(Proc, (PVOID)((ULONG_PTR)blockVa - AMEGER_TLS_VECTOR_HEADER));
+        TlsFreeRemote(Proc, (PVOID)((ULONG_PTR)blockVa - INJECTOR_TLS_VECTOR_HEADER));
         return status;
     }
 
@@ -565,7 +565,7 @@ TlsBuildTrampoline(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     status = TlsWrite(Proc, codeVa, code, n);
     if (!NT_SUCCESS(status)) {
         TlsFreeRemote(Proc, codeVa);
-        TlsFreeRemote(Proc, (PVOID)((ULONG_PTR)blockVa - AMEGER_TLS_VECTOR_HEADER));
+        TlsFreeRemote(Proc, (PVOID)((ULONG_PTR)blockVa - INJECTOR_TLS_VECTOR_HEADER));
         return status;
     }
 
@@ -575,13 +575,13 @@ TlsBuildTrampoline(_In_ PEPROCESS Proc, _In_ PETHREAD Thread, _In_ LONG Slot,
     status = PsSetContextThread(Thread, &ctx, KernelMode);
     if (!NT_SUCCESS(status)) {
 
-        AmegerDiagLog("[Tls] SetContextThread tid=%lu failed: 0x%08X\n",
+        InjectorDiagLog("[Tls] SetContextThread tid=%lu failed: 0x%08X\n",
                       (unsigned long)(ULONG_PTR)PsGetThreadId(Thread),
                       status);
         return status;
     }
 
-    AmegerDiagLog("[Tls] trampoline tid=%lu slot=%ld block=%p\n",
+    InjectorDiagLog("[Tls] trampoline tid=%lu slot=%ld block=%p\n",
                   (unsigned long)(ULONG_PTR)PsGetThreadId(Thread),
                   (long)Slot, blockVa);
     return STATUS_SUCCESS;
@@ -604,7 +604,7 @@ TlsRebaseVa(_In_ UINT64 Va, _In_ UINT64 PreferredBase,
 }
 
 NTSTATUS
-AmegerTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
+InjectorTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
                _In_ UINT32 PayloadSize, _Out_ LONG *OutSlot,
                _Out_ LONG *OutSeeded)
 {
@@ -621,12 +621,12 @@ AmegerTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
     UINT32 templateSize = 0;
     UINT32 zeroFill = 0;
     PUINT8 template = NULL;
-    PAMEGER_TLS_VECTOR vectors = NULL;
+    PINJECTOR_TLS_VECTOR vectors = NULL;
     ULONG vectorCount = 0;
     ULONG slot = 0;
     LONG seeded = 0;
 
-    if (OutSlot != NULL) *OutSlot = AMEGER_TLS_SLOT_INVALID;
+    if (OutSlot != NULL) *OutSlot = INJECTOR_TLS_SLOT_INVALID;
     if (OutSeeded != NULL) *OutSeeded = 0;
     if (Target == NULL || RemoteBase == NULL || PayloadSize < sizeof(IMAGE_DOS_HEADER))
         return STATUS_INVALID_PARAMETER;
@@ -676,23 +676,23 @@ AmegerTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
     if (startVa != NULL && endVa != NULL &&
         (UINT_PTR)endVa >= (UINT_PTR)startVa) {
         UINT_PTR size = (UINT_PTR)endVa - (UINT_PTR)startVa;
-        if (size > AMEGER_TLS_MAX_TEMPLATE)
+        if (size > INJECTOR_TLS_MAX_TEMPLATE)
             return STATUS_INVALID_IMAGE_FORMAT;
         templateSize = (UINT32)size;
     }
     zeroFill = (UINT32)tlsDir.SizeOfZeroFill;
-    if ((SIZE_T)templateSize + zeroFill > AMEGER_TLS_MAX_TEMPLATE)
+    if ((SIZE_T)templateSize + zeroFill > INJECTOR_TLS_MAX_TEMPLATE)
         return STATUS_INVALID_IMAGE_FORMAT;
 
     if (templateSize > 0) {
         template = (PUINT8)ExAllocatePool2(POOL_FLAG_NON_PAGED,
-                                           templateSize, AMEGER_TAG_LOOKUP);
+                                           templateSize, INJECTOR_TAG_LOOKUP);
         if (template == NULL)
             return STATUS_INSUFFICIENT_RESOURCES;
 
         status = TlsRead(Target, startVa, template, templateSize);
         if (!NT_SUCCESS(status)) {
-            ExFreePoolWithTag(template, AMEGER_TAG_LOOKUP);
+            ExFreePoolWithTag(template, INJECTOR_TAG_LOOKUP);
             return status;
         }
     }
@@ -701,28 +701,28 @@ AmegerTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
     if (NT_SUCCESS(status)) {
         status = TlsChooseSlot(Target, vectors, vectorCount, &slot);
         if (!NT_SUCCESS(status)) {
-            ULONG minLength = AMEGER_TLS_MAX_SLOT;
+            ULONG minLength = INJECTOR_TLS_MAX_SLOT;
             ULONG i;
 
             for (i = 0; i < vectorCount; i++)
                 if (vectors[i].Length < minLength)
                     minLength = vectors[i].Length;
-            if (minLength >= AMEGER_TLS_MAX_SLOT) {
-                ExFreePoolWithTag(vectors, AMEGER_TAG_LOOKUP);
+            if (minLength >= INJECTOR_TLS_MAX_SLOT) {
+                ExFreePoolWithTag(vectors, INJECTOR_TAG_LOOKUP);
                 status = STATUS_NOT_SUPPORTED;
                 goto fail_template;
             }
             slot = minLength;
-            AmegerDiagLog("[Map] TLS full; vectors=%lu slot=%lu (payload expands)\n",
+            InjectorDiagLog("[Map] TLS full; vectors=%lu slot=%lu (payload expands)\n",
                           vectorCount, minLength);
             status = STATUS_SUCCESS;
         }
-        ExFreePoolWithTag(vectors, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(vectors, INJECTOR_TAG_LOOKUP);
         vectors = NULL;
     } else {
 
         slot = 71;
-        AmegerDiagLog("[Map] TLS: no vectors probed; slot=%lu (payload expands)\n", slot);
+        InjectorDiagLog("[Map] TLS: no vectors probed; slot=%lu (payload expands)\n", slot);
         status = STATUS_SUCCESS;
     }
 
@@ -747,7 +747,7 @@ AmegerTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
     seeded = 1;
 
     if (g_TlsTemplate != NULL) {
-        ExFreePoolWithTag(g_TlsTemplate, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(g_TlsTemplate, INJECTOR_TAG_LOOKUP);
         g_TlsTemplate = NULL;
     }
     g_TlsTemplate = template;
@@ -763,7 +763,7 @@ AmegerTlsSetup(_In_ PEPROCESS Target, _In_ PVOID RemoteBase,
 
 fail_template:
     if (template != NULL)
-        ExFreePoolWithTag(template, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(template, INJECTOR_TAG_LOOKUP);
     g_TlsBlock = NULL;
     return status;
 }
@@ -784,20 +784,20 @@ TlsThreadNotify(HANDLE ProcessId, HANDLE ThreadId, BOOLEAN Create)
     if (!NT_SUCCESS(PsLookupThreadByThreadId(ThreadId, &thread)))
         return;
 
-    (void)AmegerTlsInstallForThread(thread);
+    (void)InjectorTlsInstallForThread(thread);
     ObDereferenceObject(thread);
 }
 
 NTSTATUS
-AmegerTlsNotifyArm(VOID)
+InjectorTlsNotifyArm(VOID)
 {
     NTSTATUS status;
 
-    if (!AmegerTlsIsActive())
+    if (!InjectorTlsIsActive())
         return STATUS_NOT_FOUND;
 
     if (InterlockedCompareExchange(&g_TlsNotifyArmed, 0, 0) != 0) {
-        g_TlsNotifyDeadline = KeQueryInterruptTime() + AMEGER_TLS_NOTIFY_100NS;
+        g_TlsNotifyDeadline = KeQueryInterruptTime() + INJECTOR_TLS_NOTIFY_100NS;
         return STATUS_SUCCESS;
     }
 
@@ -805,13 +805,13 @@ AmegerTlsNotifyArm(VOID)
     if (!NT_SUCCESS(status))
         return status;
 
-    g_TlsNotifyDeadline = KeQueryInterruptTime() + AMEGER_TLS_NOTIFY_100NS;
+    g_TlsNotifyDeadline = KeQueryInterruptTime() + INJECTOR_TLS_NOTIFY_100NS;
     InterlockedExchange(&g_TlsNotifyArmed, 1);
     return STATUS_SUCCESS;
 }
 
 VOID
-AmegerTlsNotifyDisarm(VOID)
+InjectorTlsNotifyDisarm(VOID)
 {
     if (InterlockedExchange(&g_TlsNotifyArmed, 0) != 0)
         (void)PsRemoveCreateThreadNotifyRoutine(TlsThreadNotify);
@@ -819,22 +819,22 @@ AmegerTlsNotifyDisarm(VOID)
 }
 
 VOID
-AmegerTlsNotifyTick(VOID)
+InjectorTlsNotifyTick(VOID)
 {
     if (InterlockedCompareExchange(&g_TlsNotifyArmed, 0, 0) == 0)
         return;
     if (KeQueryInterruptTime() >= g_TlsNotifyDeadline)
-        AmegerTlsNotifyDisarm();
+        InjectorTlsNotifyDisarm();
 }
 
 NTSTATUS
-AmegerTlsInstallForThread(_In_ PETHREAD Thread)
+InjectorTlsInstallForThread(_In_ PETHREAD Thread)
 {
     PEPROCESS proc;
 
     if (Thread == NULL)
         return STATUS_INVALID_PARAMETER;
-    if (!AmegerTlsIsActive())
+    if (!InjectorTlsIsActive())
         return STATUS_NOT_FOUND;
 
     proc = PsGetThreadProcess(Thread);
@@ -849,7 +849,7 @@ AmegerTlsInstallForThread(_In_ PETHREAD Thread)
 }
 
 NTSTATUS
-AmegerTlsGetInstall(_In_ PEPROCESS Target,
+InjectorTlsGetInstall(_In_ PEPROCESS Target,
                     _Out_ PVOID *OutBlock, _Out_ LONG *OutSlot)
 {
     *OutBlock = NULL;
@@ -857,7 +857,7 @@ AmegerTlsGetInstall(_In_ PEPROCESS Target,
 
     if (Target == NULL)
         return STATUS_INVALID_PARAMETER;
-    if (!AmegerTlsIsActive())
+    if (!InjectorTlsIsActive())
         return STATUS_NOT_FOUND;
     if ((HANDLE)(ULONG_PTR)PsGetProcessId(Target) != g_TlsProcId)
         return STATUS_NOT_FOUND;
@@ -870,42 +870,42 @@ AmegerTlsGetInstall(_In_ PEPROCESS Target,
 }
 
 VOID
-AmegerTlsUnregisterNotify(VOID)
+InjectorTlsUnregisterNotify(VOID)
 {
-    AmegerTlsNotifyDisarm();
+    InjectorTlsNotifyDisarm();
 
     InterlockedExchange(&g_TlsInit, 0);
 
     if (g_TlsTemplate != NULL) {
-        ExFreePoolWithTag(g_TlsTemplate, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(g_TlsTemplate, INJECTOR_TAG_LOOKUP);
         g_TlsTemplate = NULL;
     }
     g_TlsTemplateSize = 0;
     g_TlsSizeOfZeroFill = 0;
-    g_TlsSlot = AMEGER_TLS_SLOT_INVALID;
+    g_TlsSlot = INJECTOR_TLS_SLOT_INVALID;
     g_TlsProcId = NULL;
     g_TlsBlock = NULL;
 }
 
 BOOLEAN
-AmegerTlsIsActive(VOID)
+InjectorTlsIsActive(VOID)
 {
     return (InterlockedCompareExchange(&g_TlsInit, 0, 0) != 0) &&
-           (g_TlsSlot != AMEGER_TLS_SLOT_INVALID);
+           (g_TlsSlot != INJECTOR_TLS_SLOT_INVALID);
 }
 
 VOID
-AmegerTlsPollProcess(_In_ PEPROCESS Target)
+InjectorTlsPollProcess(_In_ PEPROCESS Target)
 {
     LONG slot;
     PUINT8 template;
     UINT32 templateSize;
     UINT32 zeroFill;
-    PAMEGER_THREAD_ENTRY entries = NULL;
+    PINJECTOR_THREAD_ENTRY entries = NULL;
     ULONG count = 0;
     ULONG i;
 
-    if (Target == NULL || !AmegerTlsIsActive())
+    if (Target == NULL || !InjectorTlsIsActive())
         return;
     if ((HANDLE)(ULONG_PTR)PsGetProcessId(Target) != g_TlsProcId)
         return;
@@ -917,7 +917,7 @@ AmegerTlsPollProcess(_In_ PEPROCESS Target)
     templateSize = g_TlsTemplateSize;
     zeroFill = g_TlsSizeOfZeroFill;
 
-    if (!NT_SUCCESS(AmegerSnapshotThreads(
+    if (!NT_SUCCESS(InjectorSnapshotThreads(
             (ULONG)(ULONG_PTR)PsGetProcessId(Target), &entries, &count)))
         return;
 
@@ -934,11 +934,11 @@ AmegerTlsPollProcess(_In_ PEPROCESS Target)
         ObDereferenceObject(thread);
     }
 
-    AmegerFreeThreads(entries);
+    InjectorFreeThreads(entries);
 }
 
 UINT32
-AmegerTlsGetTargetPid(VOID)
+InjectorTlsGetTargetPid(VOID)
 {
     if (g_TlsProcId == NULL)
         return 0;

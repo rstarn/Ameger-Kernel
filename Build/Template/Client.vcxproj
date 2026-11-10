@@ -27,8 +27,8 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(AmegerChannelMagic)'==''">
-    <AmegerChannelMagic>0x1122334455667788</AmegerChannelMagic>
+  <PropertyGroup Condition="'$(InjectorChannelMagic)'==''">
+    <InjectorChannelMagic>0x1122334455667788</InjectorChannelMagic>
   </PropertyGroup>
   <PropertyGroup>
     <OutDir>$(ProjectDir)..\..\Assets\Client\</OutDir>
@@ -41,7 +41,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_CONSOLE;_WIN32_WINNT=0x0A00;AMEGER_CHANNEL_MAGIC=$(AmegerChannelMagic);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;_WIN32_WINNT=0x0A00;INJECTOR_CHANNEL_MAGIC=$(InjectorChannelMagic);%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ExceptionHandling>Async</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
     </ClCompile>

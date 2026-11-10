@@ -2,25 +2,25 @@
 
 #include <ntifs.h>
 
-NTSTATUS AmegerTlsSetup(_In_ PEPROCESS Target,
+NTSTATUS InjectorTlsSetup(_In_ PEPROCESS Target,
                         _In_ PVOID RemoteBase,
                         _In_ UINT32 PayloadSize,
                         _Out_ LONG *OutSlot,
                         _Out_ LONG *OutSeeded);
 
-NTSTATUS AmegerTlsGetInstall(_In_ PEPROCESS Target,
+NTSTATUS InjectorTlsGetInstall(_In_ PEPROCESS Target,
                              _Out_ PVOID *OutBlock, _Out_ LONG *OutSlot);
 
-NTSTATUS AmegerTlsNotifyArm(VOID);
-VOID     AmegerTlsNotifyDisarm(VOID);
-VOID     AmegerTlsNotifyTick(VOID);
+NTSTATUS InjectorTlsNotifyArm(VOID);
+VOID     InjectorTlsNotifyDisarm(VOID);
+VOID     InjectorTlsNotifyTick(VOID);
 
-NTSTATUS AmegerTlsInstallForThread(_In_ PETHREAD Thread);
+NTSTATUS InjectorTlsInstallForThread(_In_ PETHREAD Thread);
 
-VOID AmegerTlsPollProcess(_In_ PEPROCESS Target);
+VOID InjectorTlsPollProcess(_In_ PEPROCESS Target);
 
-BOOLEAN AmegerTlsIsActive(VOID);
+BOOLEAN InjectorTlsIsActive(VOID);
 
-UINT32 AmegerTlsGetTargetPid(VOID);
+UINT32 InjectorTlsGetTargetPid(VOID);
 
-VOID AmegerTlsUnregisterNotify(VOID);
+VOID InjectorTlsUnregisterNotify(VOID);

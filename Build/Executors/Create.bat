@@ -18,15 +18,15 @@ if exist "%CACHEDIR%\_tc_msbuild.txt" for /f "usebackq delims=" %%i in ("%CACHED
 echo OK: VSWHERE=%VSWHERE%
 echo OK: MSBUILD=%MSBUILD%
 
-if exist "D:\Ameger\Mapper\Build\Release\SymbolTool.exe" (
-    echo OK: SymbolTool ^(D:\Ameger\Mapper\Build\Release\SymbolTool.exe^)
+if exist "D:\Injector\Mapper\Build\Release\SymbolTool.exe" (
+    echo OK: SymbolTool ^(D:\Injector\Mapper\Build\Release\SymbolTool.exe^)
 ) else (
-    echo WARN: D:\Ameger\Mapper\Build\Release\SymbolTool.exe missing ^(Offsets.ini must be provisioned^)
+    echo WARN: D:\Injector\Mapper\Build\Release\SymbolTool.exe missing ^(Offsets.ini must be provisioned^)
 )
-if exist "D:\Ameger\Mapper\Build\Release\Mapper.exe" (
-    echo OK: Mapper ^(D:\Ameger\Mapper\Build\Release\Mapper.exe^)
+if exist "D:\Injector\Mapper\Build\Release\Mapper.exe" (
+    echo OK: Mapper ^(D:\Injector\Mapper\Build\Release\Mapper.exe^)
 ) else (
-    echo WARN: D:\Ameger\Mapper\Build\Release\Mapper.exe missing
+    echo WARN: D:\Injector\Mapper\Build\Release\Mapper.exe missing
 )
 
 call :Stage "2/6 Projects"
@@ -50,8 +50,8 @@ mkdir "%CACHEDIR%" >nul
 echo Clean OK
 
 call :Stage "4/6 Offsets"
-if exist "D:\Ameger\Mapper\Build\Release\SymbolTool.exe" (
-    if not exist "D:\Ameger\Mapper\Build\Release\Offsets.ini" (
+if exist "D:\Injector\Mapper\Build\Release\SymbolTool.exe" (
+    if not exist "D:\Injector\Mapper\Build\Release\Offsets.ini" (
         powershell -NoProfile -ExecutionPolicy Bypass -File "Build\Scripts\Creation\GenerateOffsets.ps1" -NoPause
         if errorlevel 1 (echo FAIL: GenerateOffsets & goto :fail)
         echo OK: Offsets.ini generated ^(direct^)
@@ -59,7 +59,7 @@ if exist "D:\Ameger\Mapper\Build\Release\SymbolTool.exe" (
         echo OK: Offsets.ini exists ^(direct, not regenerated^)
     )
 ) else (
-    echo SKIP: Offsets.ini ^(SymbolTool missing at D:\Ameger\Mapper^)
+    echo SKIP: Offsets.ini ^(SymbolTool missing at D:\Injector\Mapper^)
 )
 
 call :Stage "5/6 Build"

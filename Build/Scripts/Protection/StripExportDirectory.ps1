@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$noColour = ($env:AMEGER_NO_COLOR -eq '1')
+$noColour = ($env:INJECTOR_NO_COLOR -eq '1')
 $esc = [string][char]27
 if ($noColour) {
     $G = ''; $E = ''; $X = ''

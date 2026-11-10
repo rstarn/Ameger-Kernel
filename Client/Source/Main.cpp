@@ -6,23 +6,23 @@
 #include <string.h>
 #include <winnt.h>
 
-#ifndef AMEGER_CHANNEL_MAGIC
-#define AMEGER_CHANNEL_MAGIC 0x1122334455667788ULL
+#ifndef INJECTOR_CHANNEL_MAGIC
+#define INJECTOR_CHANNEL_MAGIC 0x1122334455667788ULL
 #endif
 #include "../../Driver/Core/Communication/Offsets.h"
 
-#define AMEGER_CHANNEL_RING_SIZE  0x4000
-#define AMEGER_CHANNEL_HEADER_SIZE 0x1000
-#define AMEGER_CHANNEL_TOTAL_SIZE (AMEGER_CHANNEL_HEADER_SIZE + AMEGER_CHANNEL_RING_SIZE)
-#define AMEGER_PAYLOAD_MAX (16u * 1024u * 1024u)
+#define INJECTOR_CHANNEL_RING_SIZE  0x4000
+#define INJECTOR_CHANNEL_HEADER_SIZE 0x1000
+#define INJECTOR_CHANNEL_TOTAL_SIZE (INJECTOR_CHANNEL_HEADER_SIZE + INJECTOR_CHANNEL_RING_SIZE)
+#define INJECTOR_PAYLOAD_MAX (16u * 1024u * 1024u)
 
-#define AMEGER_CMD_NONE     0
-#define AMEGER_CMD_VALIDATE 1
-#define AMEGER_CMD_MAP      2
-#define AMEGER_CMD_EXEC     3
-#define AMEGER_CMD_PROTECT_PID 4
+#define INJECTOR_CMD_NONE     0
+#define INJECTOR_CMD_VALIDATE 1
+#define INJECTOR_CMD_MAP      2
+#define INJECTOR_CMD_EXEC     3
+#define INJECTOR_CMD_PROTECT_PID 4
 
-typedef struct _AMEGER_CHANNEL {
+typedef struct _INJECTOR_CHANNEL {
     unsigned long long Magic;
     unsigned int       AbiVersion;
     unsigned int       _pad0;
@@ -52,41 +52,41 @@ typedef struct _AMEGER_CHANNEL {
     volatile unsigned long long GadgetVa;
     volatile long      ObInitStatus;
     unsigned int       _pad_obinit;
-    unsigned char      Ring[AMEGER_CHANNEL_RING_SIZE];
-} AMEGER_CHANNEL;
+    unsigned char      Ring[INJECTOR_CHANNEL_RING_SIZE];
+} INJECTOR_CHANNEL;
 
-static_assert(offsetof(AMEGER_CHANNEL, SelfTestAck) == 0x78,
+static_assert(offsetof(INJECTOR_CHANNEL, SelfTestAck) == 0x78,
               "Client SelfTestAck offset mismatch with driver");
-static_assert(offsetof(AMEGER_CHANNEL, ObInitStatus) == 0x88,
-              "Client AMEGER_CHANNEL.ObInitStatus offset mismatch with driver");
-static_assert(offsetof(AMEGER_CHANNEL, Ring) == 0x90,
-              "Client AMEGER_CHANNEL.Ring offset mismatch with driver");
-static_assert(sizeof(AMEGER_CHANNEL) >= 0x4090,
-              "Client AMEGER_CHANNEL must be at least 0x1000 header + 0x3000 ring");
-static_assert(sizeof(AMEGER_CHANNEL) == 0x90 + AMEGER_CHANNEL_RING_SIZE,
-              "Client AMEGER_CHANNEL size mismatch with driver");
-static_assert(sizeof(AMEGER_CHANNEL) == 0x4090,
-              "Client AMEGER_CHANNEL must be exactly 0x4090 bytes");
+static_assert(offsetof(INJECTOR_CHANNEL, ObInitStatus) == 0x88,
+              "Client INJECTOR_CHANNEL.ObInitStatus offset mismatch with driver");
+static_assert(offsetof(INJECTOR_CHANNEL, Ring) == 0x90,
+              "Client INJECTOR_CHANNEL.Ring offset mismatch with driver");
+static_assert(sizeof(INJECTOR_CHANNEL) >= 0x4090,
+              "Client INJECTOR_CHANNEL must be at least 0x1000 header + 0x3000 ring");
+static_assert(sizeof(INJECTOR_CHANNEL) == 0x90 + INJECTOR_CHANNEL_RING_SIZE,
+              "Client INJECTOR_CHANNEL size mismatch with driver");
+static_assert(sizeof(INJECTOR_CHANNEL) == 0x4090,
+              "Client INJECTOR_CHANNEL must be exactly 0x4090 bytes");
 
-template <size_t N> struct AmegerChannelSizeProof;
-template <> struct AmegerChannelSizeProof<0x4090> { static constexpr bool ok = true; };
-static AmegerChannelSizeProof<sizeof(AMEGER_CHANNEL)> g_channelSizeProof;
-static_assert(AMEGER_CHANNEL_USER_VA == 0x00007FF000000000ULL,
+template <size_t N> struct InjectorChannelSizeProof;
+template <> struct InjectorChannelSizeProof<0x4090> { static constexpr bool ok = true; };
+static InjectorChannelSizeProof<sizeof(INJECTOR_CHANNEL)> g_channelSizeProof;
+static_assert(INJECTOR_CHANNEL_USER_VA == 0x00007FF000000000ULL,
               "Channel VA must not be overridden");
-static_assert(AMEGER_SELFTEST_ACK_OFFSET == offsetof(AMEGER_CHANNEL, SelfTestAck),
-              "AMEGER_SELFTEST_ACK_OFFSET must match the struct offset");
+static_assert(INJECTOR_SELFTEST_ACK_OFFSET == offsetof(INJECTOR_CHANNEL, SelfTestAck),
+              "INJECTOR_SELFTEST_ACK_OFFSET must match the struct offset");
 
-static AMEGER_CHANNEL *attach_channel(void)
+static INJECTOR_CHANNEL *attach_channel(void)
 {
     const int kMaxAttempts = 50;
     const DWORD kDelayMs = 100;
     int attempt;
-    AMEGER_CHANNEL *ch = NULL;
+    INJECTOR_CHANNEL *ch = NULL;
 
     for (attempt = 0; attempt < kMaxAttempts; attempt++) {
         __try {
-            ch = (AMEGER_CHANNEL *)AMEGER_CHANNEL_USER_VA;
-            if (ch->Magic == AMEGER_CHANNEL_MAGIC &&
+            ch = (INJECTOR_CHANNEL *)INJECTOR_CHANNEL_USER_VA;
+            if (ch->Magic == INJECTOR_CHANNEL_MAGIC &&
                 ch->AbiVersion == 6) {
                 if (attempt > 0) {
                     printf("  channel detected after %d ms\n",
@@ -96,7 +96,7 @@ static AMEGER_CHANNEL *attach_channel(void)
             }
 
             printf("  magic/ABI mismatch (magic expected=0x%016llX got=0x%016llX, abi=%u)\n",
-                   (unsigned long long)AMEGER_CHANNEL_MAGIC,
+                   (unsigned long long)INJECTOR_CHANNEL_MAGIC,
                    (unsigned long long)ch->Magic,
                    (unsigned)ch->AbiVersion);
             return NULL;
@@ -193,7 +193,7 @@ static int read_file_all(const char *path, unsigned char **out, size_t *out_len)
     return 1;
 }
 
-static int send_payload(AMEGER_CHANNEL *ch, const unsigned char *buf, size_t len)
+static int send_payload(INJECTOR_CHANNEL *ch, const unsigned char *buf, size_t len)
 {
     size_t offset = 0;
     DWORD lastProgress = GetTickCount();
@@ -201,7 +201,7 @@ static int send_payload(AMEGER_CHANNEL *ch, const unsigned char *buf, size_t len
         long head = InterlockedCompareExchange(&ch->Head, 0, 0);
         long tail = InterlockedCompareExchange(&ch->Tail, 0, 0);
         unsigned int inUse = (unsigned int)(head - tail);
-        if (inUse >= AMEGER_CHANNEL_RING_SIZE) {
+        if (inUse >= INJECTOR_CHANNEL_RING_SIZE) {
             Sleep(1);
             if (GetTickCount() - lastProgress > 5000) {
                 printf("  transfer stalled at %zu/%zu\n", offset, len);
@@ -209,11 +209,11 @@ static int send_payload(AMEGER_CHANNEL *ch, const unsigned char *buf, size_t len
             }
             continue;
         }
-        unsigned int space = AMEGER_CHANNEL_RING_SIZE - inUse;
+        unsigned int space = INJECTOR_CHANNEL_RING_SIZE - inUse;
         unsigned int want = (unsigned int)(len - offset);
         if (want > space) want = space;
-        unsigned int ringIdx = (unsigned int)head % AMEGER_CHANNEL_RING_SIZE;
-        unsigned int first = AMEGER_CHANNEL_RING_SIZE - ringIdx;
+        unsigned int ringIdx = (unsigned int)head % INJECTOR_CHANNEL_RING_SIZE;
+        unsigned int first = INJECTOR_CHANNEL_RING_SIZE - ringIdx;
         if (first > want) first = want;
         memcpy(ch->Ring + ringIdx, buf + offset, first);
         if (want > first) memcpy(ch->Ring, buf + offset + first, want - first);
@@ -224,7 +224,7 @@ static int send_payload(AMEGER_CHANNEL *ch, const unsigned char *buf, size_t len
     return 1;
 }
 
-static int wait_done(AMEGER_CHANNEL *ch, DWORD timeoutMs)
+static int wait_done(INJECTOR_CHANNEL *ch, DWORD timeoutMs)
 {
     DWORD start = GetTickCount();
     while (InterlockedCompareExchange(&ch->Done, 0, 0) == 0) {
@@ -234,7 +234,7 @@ static int wait_done(AMEGER_CHANNEL *ch, DWORD timeoutMs)
     return 1;
 }
 
-static int run_status(AMEGER_CHANNEL *ch)
+static int run_status(INJECTOR_CHANNEL *ch)
 {
     if (ch == NULL) {
         printf("status: channel not attached\n");
@@ -244,7 +244,7 @@ static int run_status(AMEGER_CHANNEL *ch)
            ch->AbiVersion, ch->Pid, ch->Head, ch->Tail, ch->Done);
     printf("abi=%u\n", ch->AbiVersion);
     printf("magic=0x%016llX\n", (unsigned long long)ch->Magic);
-    printf("sizeof_channel=%u\n", (unsigned)sizeof(AMEGER_CHANNEL));
+    printf("sizeof_channel=%u\n", (unsigned)sizeof(INJECTOR_CHANNEL));
     if (ch->AbiVersion >= 6) {
         printf("ob_init=0x%08lX gadget=0x%016llX\n", (unsigned long)ch->ObInitStatus, (unsigned long long)ch->GadgetVa);
     } else {
@@ -357,11 +357,11 @@ static const char *ntstatus_hint(long st)
     case 0xC00000A3UL: return "STATUS_NOT_READY (ObCallback protection not engaged; inject applies it automatically)";
     case 0xC0000225UL: return "STATUS_NOT_FOUND (module or export missing)";
     case 0xC0000409UL: return "STATUS_STACK_BUFFER_OVERRUN (payload /GS tripped)";
-    default:           return "(unmapped; see driver DbgPrint with AMEGER_DIAG=1)";
+    default:           return "(unmapped; see driver DbgPrint with INJECTOR_DIAG=1)";
     }
 }
 
-static int run_inject(AMEGER_CHANNEL *ch, unsigned int pid)
+static int run_inject(INJECTOR_CHANNEL *ch, unsigned int pid)
 {
     unsigned char *buf = NULL;
     size_t len = 0;
@@ -370,13 +370,13 @@ static int run_inject(AMEGER_CHANNEL *ch, unsigned int pid)
 
     resolve_target_dll(targetDll, sizeof(targetDll));
     if (!read_file_all(targetDll, &buf, &len)) return 2;
-    if (len == 0 || len > AMEGER_PAYLOAD_MAX) {
-        printf("  payload size %zu out of range (max %u)\n", len, AMEGER_PAYLOAD_MAX);
+    if (len == 0 || len > INJECTOR_PAYLOAD_MAX) {
+        printf("  payload size %zu out of range (max %u)\n", len, INJECTOR_PAYLOAD_MAX);
         free(buf); return 2;
     }
     if (ch->AbiVersion != 6) { printf("  driver ABI too old (need 6)\n"); free(buf); return 2; }
 
-    if (DeleteFileA("C:\\Windows\\Temp\\ameger_diag.log")) {
+    if (DeleteFileA("C:\\Windows\\Temp\\injector_diag.log")) {
         printf("  cleanup: diag log deleted\n");
     } else if (GetLastError() == ERROR_FILE_NOT_FOUND) {
         printf("  cleanup: no diag log present\n");
@@ -391,7 +391,7 @@ static int run_inject(AMEGER_CHANNEL *ch, unsigned int pid)
     ch->GadgetVa = 0;
     if (ch->AbiVersion >= 6) ch->ObInitStatus = 0;
     InterlockedExchange(&ch->Done, 0);
-    InterlockedExchange(&ch->Cmd, AMEGER_CMD_PROTECT_PID);
+    InterlockedExchange(&ch->Cmd, INJECTOR_CMD_PROTECT_PID);
     if (!wait_done(ch, 5000)) {
         printf("  protect: CMD_PROTECT_PID timeout\n");
     } else {
@@ -425,12 +425,12 @@ static int run_inject(AMEGER_CHANNEL *ch, unsigned int pid)
     ch->HijackThreadId = 0;
     ch->HijackReserved = 0;
     InterlockedExchange(&ch->Done, 0);
-    InterlockedExchange(&ch->Cmd, AMEGER_CMD_NONE);
+    InterlockedExchange(&ch->Cmd, INJECTOR_CMD_NONE);
 
     if (!send_payload(ch, buf, len)) { free(buf); return 3; }
     printf("  payload sent: %zu bytes; signalling CMD_MAP\n", len);
 
-    InterlockedExchange(&ch->Cmd, AMEGER_CMD_MAP);
+    InterlockedExchange(&ch->Cmd, INJECTOR_CMD_MAP);
 
     if (!wait_done(ch, 10000)) {
         printf("  timeout waiting for driver\n");
@@ -452,7 +452,7 @@ static int run_inject(AMEGER_CHANNEL *ch, unsigned int pid)
         ch->HijackThreadId = 0;
         ch->HijackReserved = 0;
         InterlockedExchange(&ch->Done, 0);
-        InterlockedExchange(&ch->Cmd, AMEGER_CMD_EXEC);
+        InterlockedExchange(&ch->Cmd, INJECTOR_CMD_EXEC);
         if (!wait_done(ch, 5000)) {
             printf("  CMD_EXEC timeout\n");
             free(buf); return 7;
@@ -479,9 +479,9 @@ static int run_inject(AMEGER_CHANNEL *ch, unsigned int pid)
 int main(int argc, char **argv)
 {
     printf("Driver client\n");
-    printf("  channel VA : 0x%016llX\n", (unsigned long long)AMEGER_CHANNEL_USER_VA);
+    printf("  channel VA : 0x%016llX\n", (unsigned long long)INJECTOR_CHANNEL_USER_VA);
 
-    AMEGER_CHANNEL *ch = attach_channel();
+    INJECTOR_CHANNEL *ch = attach_channel();
 
     if (ch != NULL && ch->AbiVersion != 6) {
         fprintf(stderr, "FATAL: channel ABI mismatch: driver reports %u, "
@@ -494,7 +494,7 @@ int main(int argc, char **argv)
     if (ch == NULL) {
         printf("\n  Driver channel is not mapped yet.\n");
         printf("  Load the driver first, then re-open the client:\n");
-        printf("    D:\\Ameger\\Mapper\\Build\\Release\\Mapper.exe Assets\\Driver\\Driver.sys\n");
+        printf("    D:\\Injector\\Mapper\\Build\\Release\\Mapper.exe Assets\\Driver\\Driver.sys\n");
         printf("\n  Usage (after the driver is loaded):\n");
         printf("    --status\n");
         printf("    --inject <pid>\n");

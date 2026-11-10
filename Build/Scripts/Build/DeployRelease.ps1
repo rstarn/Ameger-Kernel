@@ -29,7 +29,7 @@ if (Test-Path $payloadPath) {
   Write-Warning "Payload not found at $payloadPath (drop renewed Target.dll there before building)"
 }
 
-$mapperDir = "D:\Ameger\Mapper\Build\Release"
+$mapperDir = "D:\Injector\Mapper\Build\Release"
 if (Test-Path (Join-Path $mapperDir "Offsets.ini")) {
   Write-Host "Offsets  -> direct (not replicated): $(Join-Path $mapperDir 'Offsets.ini')"
 } else {
@@ -37,8 +37,8 @@ if (Test-Path (Join-Path $mapperDir "Offsets.ini")) {
 }
 if (Test-Path (Join-Path $mapperDir "Mapper.exe")) {
   Write-Host "Mapper   -> direct (not replicated): $(Join-Path $mapperDir 'Mapper.exe')"
-} elseif (Test-Path (Join-Path $mapperDir "Ameger-Mapper.exe")) {
-  Write-Host "Mapper   -> direct (not replicated): $(Join-Path $mapperDir 'Ameger-Mapper.exe')"
+} elseif (Test-Path (Join-Path $mapperDir "Injector-Mapper.exe")) {
+  Write-Host "Mapper   -> direct (not replicated): $(Join-Path $mapperDir 'Injector-Mapper.exe')"
 } else {
   Write-Warning "Mapper.exe missing at $mapperDir (direct path)"
 }
@@ -64,7 +64,7 @@ Write-Host "Sweep    -> PDB/LIB/EXP/ILK/OBJ removed from $releaseDir"
 
 $manifest = "$releaseDir\SectionManifest.txt"
 $lines = @(
-  "# Ameger-Kernel release manifest",
+  "# Injector-Kernel release manifest",
   "# Generated $(Get-Date -Format 'o')",
   "",
   "Client:   Client.exe",
@@ -79,8 +79,8 @@ $lines += ""
 $lines += "Config:   Target.ini (DPAPI)"
 $lines += "Log:      Target.log (created empty; client appends)"
 $lines += ""
-$lines += "Offsets.ini: direct D:\Ameger\Mapper\Build\Release\Offsets.ini (not replicated)"
-$lines += "Mapper.exe:  direct D:\Ameger\Mapper\Build\Release\Mapper.exe (not replicated)"
+$lines += "Offsets.ini: direct D:\Injector\Mapper\Build\Release\Offsets.ini (not replicated)"
+$lines += "Mapper.exe:  direct D:\Injector\Mapper\Build\Release\Mapper.exe (not replicated)"
 [System.IO.File]::WriteAllLines($manifest, $lines, [System.Text.Encoding]::UTF8)
 Write-Host "Manifest -> $manifest"
 

@@ -30,7 +30,7 @@ typedef struct _RTL_PROCESS_MODULES {
 #endif
 
 static BOOLEAN
-AmegerAsciiEqI(PCSTR A, PCSTR B)
+InjectorAsciiEqI(PCSTR A, PCSTR B)
 {
     if (A == NULL || B == NULL)
         return FALSE;
@@ -46,7 +46,7 @@ AmegerAsciiEqI(PCSTR A, PCSTR B)
 }
 
 static BOOLEAN
-AmegerBoundsOk(PVOID Base, ULONG Size, PVOID Ptr, SIZE_T Need)
+InjectorBoundsOk(PVOID Base, ULONG Size, PVOID Ptr, SIZE_T Need)
 {
     UINT_PTR b = (UINT_PTR)Base;
     UINT_PTR p = (UINT_PTR)Ptr;
@@ -61,7 +61,7 @@ AmegerBoundsOk(PVOID Base, ULONG Size, PVOID Ptr, SIZE_T Need)
 }
 
 PVOID
-AmegerResolveExport(PAMEGER_EXPORTS Exports,
+InjectorResolveExport(PINJECTOR_EXPORTS Exports,
                     PCSTR ModuleName,
                     PCSTR FunctionName)
 {
@@ -80,7 +80,7 @@ AmegerResolveExport(PAMEGER_EXPORTS Exports,
         return NULL;
 
     dos = (PIMAGE_DOS_HEADER)base;
-    if (!AmegerBoundsOk(base, size, dos, sizeof(IMAGE_DOS_HEADER)))
+    if (!InjectorBoundsOk(base, size, dos, sizeof(IMAGE_DOS_HEADER)))
         return NULL;
     if (dos->e_magic != IMAGE_DOS_SIGNATURE)
         return NULL;
@@ -88,7 +88,7 @@ AmegerResolveExport(PAMEGER_EXPORTS Exports,
         return NULL;
 
     nt = (PIMAGE_NT_HEADERS64)((UINT8 *)base + dos->e_lfanew);
-    if (!AmegerBoundsOk(base, size, nt, sizeof(IMAGE_NT_HEADERS64)))
+    if (!InjectorBoundsOk(base, size, nt, sizeof(IMAGE_NT_HEADERS64)))
         return NULL;
     if (nt->Signature != IMAGE_NT_SIGNATURE)
         return NULL;
@@ -99,7 +99,7 @@ AmegerResolveExport(PAMEGER_EXPORTS Exports,
         return NULL;
 
     exp = (PIMAGE_EXPORT_DIRECTORY)((UINT8 *)base + expRva);
-    if (!AmegerBoundsOk(base, size, exp, sizeof(IMAGE_EXPORT_DIRECTORY)))
+    if (!InjectorBoundsOk(base, size, exp, sizeof(IMAGE_EXPORT_DIRECTORY)))
         return NULL;
 
     if (exp->AddressOfNames == 0 || exp->AddressOfFunctions == 0 || exp->AddressOfNameOrdinals == 0)
@@ -116,24 +116,24 @@ AmegerResolveExport(PAMEGER_EXPORTS Exports,
         PCSTR name;
         USHORT ord;
 
-        if (!AmegerBoundsOk(base, size, &names[i], sizeof(ULONG)) ||
-            !AmegerBoundsOk(base, size, &ords[i], sizeof(USHORT)))
+        if (!InjectorBoundsOk(base, size, &names[i], sizeof(ULONG)) ||
+            !InjectorBoundsOk(base, size, &ords[i], sizeof(USHORT)))
             break;
 
         nameRva = names[i];
         if (nameRva == 0 || nameRva >= size)
             continue;
         name = (PCSTR)((UINT8 *)base + nameRva);
-        if (!AmegerBoundsOk(base, size, (PVOID)name, 1))
+        if (!InjectorBoundsOk(base, size, (PVOID)name, 1))
             continue;
 
-        if (!AmegerAsciiEqI(name, FunctionName))
+        if (!InjectorAsciiEqI(name, FunctionName))
             continue;
 
         ord = ords[i];
         if (ord >= exp->NumberOfFunctions)
             return NULL;
-        if (!AmegerBoundsOk(base, size, &funcs[ord], sizeof(ULONG)))
+        if (!InjectorBoundsOk(base, size, &funcs[ord], sizeof(ULONG)))
             return NULL;
         funcRva = funcs[ord];
         if (funcRva == 0 || funcRva >= size)
@@ -149,7 +149,7 @@ AmegerResolveExport(PAMEGER_EXPORTS Exports,
 }
 
 NTSTATUS
-AmegerExportsInitialize(PAMEGER_EXPORTS Out)
+InjectorExportsInitialize(PINJECTOR_EXPORTS Out)
 {
     NTSTATUS status;
     ULONG len = 0;
@@ -169,13 +169,13 @@ AmegerExportsInitialize(PAMEGER_EXPORTS Out)
         len = 0x10000;
     len += 0x1000;
 
-    mods = (PRTL_PROCESS_MODULES)ExAllocatePool2(POOL_FLAG_PAGED, len, AMEGER_TAG_LOOKUP);
+    mods = (PRTL_PROCESS_MODULES)ExAllocatePool2(POOL_FLAG_PAGED, len, INJECTOR_TAG_LOOKUP);
     if (mods == NULL)
         return STATUS_INSUFFICIENT_RESOURCES;
 
     status = ZwQuerySystemInformation(SystemModuleInformation, mods, len, &len);
     if (!NT_SUCCESS(status)) {
-        ExFreePoolWithTag(mods, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(mods, INJECTOR_TAG_LOOKUP);
         return status;
     }
 
@@ -186,21 +186,21 @@ AmegerExportsInitialize(PAMEGER_EXPORTS Out)
             continue;
 
         if (!found &&
-            (AmegerAsciiEqI(fn, "ntoskrnl.exe") ||
-             AmegerAsciiEqI(fn, "ntkrnlmp.exe") ||
-             AmegerAsciiEqI(fn, "ntkrnlpa.exe") ||
-             AmegerAsciiEqI(fn, "ntkrpamp.exe"))) {
+            (InjectorAsciiEqI(fn, "ntoskrnl.exe") ||
+             InjectorAsciiEqI(fn, "ntkrnlmp.exe") ||
+             InjectorAsciiEqI(fn, "ntkrnlpa.exe") ||
+             InjectorAsciiEqI(fn, "ntkrpamp.exe"))) {
             Out->NtoskrnlBase = m->ImageBase;
             Out->NtoskrnlSize = m->ImageSize;
             found = TRUE;
         }
-        if (AmegerAsciiEqI(fn, "storport.sys"))
+        if (InjectorAsciiEqI(fn, "storport.sys"))
             Out->StorportBase = m->ImageBase;
-        if (AmegerAsciiEqI(fn, "acpi.sys"))
+        if (InjectorAsciiEqI(fn, "acpi.sys"))
             Out->AcpiBase = m->ImageBase;
-        if (AmegerAsciiEqI(fn, "tcpip.sys"))
+        if (InjectorAsciiEqI(fn, "tcpip.sys"))
             Out->TcpipBase = m->ImageBase;
-        if (AmegerAsciiEqI(fn, "ndis.sys"))
+        if (InjectorAsciiEqI(fn, "ndis.sys"))
             Out->NdisBase = m->ImageBase;
     }
 
@@ -210,15 +210,15 @@ AmegerExportsInitialize(PAMEGER_EXPORTS Out)
         found = TRUE;
     }
 
-    ExFreePoolWithTag(mods, AMEGER_TAG_LOOKUP);
+    ExFreePoolWithTag(mods, INJECTOR_TAG_LOOKUP);
 
     if (!found || Out->NtoskrnlBase == NULL || Out->NtoskrnlSize == 0)
         return STATUS_NOT_FOUND;
 
-    Out->ObRegisterCallbacks   = AmegerResolveExport(Out, "ntoskrnl.exe", "ObRegisterCallbacks");
-    Out->ObUnRegisterCallbacks = AmegerResolveExport(Out, "ntoskrnl.exe", "ObUnRegisterCallbacks");
-    Out->PsProcessType         = (PVOID *)AmegerResolveExport(Out, "ntoskrnl.exe", "PsProcessType");
-    Out->PsThreadType          = (PVOID *)AmegerResolveExport(Out, "ntoskrnl.exe", "PsThreadType");
+    Out->ObRegisterCallbacks   = InjectorResolveExport(Out, "ntoskrnl.exe", "ObRegisterCallbacks");
+    Out->ObUnRegisterCallbacks = InjectorResolveExport(Out, "ntoskrnl.exe", "ObUnRegisterCallbacks");
+    Out->PsProcessType         = (PVOID *)InjectorResolveExport(Out, "ntoskrnl.exe", "PsProcessType");
+    Out->PsThreadType          = (PVOID *)InjectorResolveExport(Out, "ntoskrnl.exe", "PsThreadType");
 
     if (Out->ObRegisterCallbacks == NULL || Out->ObUnRegisterCallbacks == NULL ||
         Out->PsProcessType == NULL || Out->PsThreadType == NULL) {
@@ -234,7 +234,7 @@ AmegerExportsInitialize(PAMEGER_EXPORTS Out)
 }
 
 VOID
-AmegerExportsDestroy(PAMEGER_EXPORTS Exports)
+InjectorExportsDestroy(PINJECTOR_EXPORTS Exports)
 {
     if (Exports != NULL)
         RtlZeroMemory(Exports, sizeof(*Exports));

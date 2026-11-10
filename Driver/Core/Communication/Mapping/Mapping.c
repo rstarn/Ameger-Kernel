@@ -38,7 +38,7 @@ NTSYSAPI NTSTATUS NTAPI ZwQuerySystemInformation(
 NTKERNELAPI PPEB PsGetProcessPeb(_In_ PEPROCESS Process);
 
 VOID
-AmegerDiagLog(_In_ PCSTR Format, ...)
+InjectorDiagLog(_In_ PCSTR Format, ...)
 {
     UNICODE_STRING path;
     OBJECT_ATTRIBUTES oa;
@@ -59,7 +59,7 @@ AmegerDiagLog(_In_ PCSTR Format, ...)
     if (!NT_SUCCESS(RtlStringCchLengthA(buf, sizeof(buf), &len)) || len == 0)
         return;
 
-    RtlInitUnicodeString(&path, L"\\SystemRoot\\Temp\\ameger_diag.log");
+    RtlInitUnicodeString(&path, L"\\SystemRoot\\Temp\\injector_diag.log");
     InitializeObjectAttributes(&oa, &path,
                                OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
                                NULL, NULL);
@@ -80,9 +80,9 @@ AmegerDiagLog(_In_ PCSTR Format, ...)
     (void)ZwClose(hFile);
 }
 
-static BOOLEAN AmegerImageNameMatch(PCSTR Name)
+static BOOLEAN InjectorImageNameMatch(PCSTR Name)
 {
-    PCSTR want = AMEGER_CLIENT_IMAGE_NAME;
+    PCSTR want = INJECTOR_CLIENT_IMAGE_NAME;
     SIZE_T i = 0;
     if (Name == NULL) return FALSE;
     while (want[i] && Name[i] && i < 14) {
@@ -97,9 +97,9 @@ static BOOLEAN AmegerImageNameMatch(PCSTR Name)
     return (Name[i] == '\0' && want[i] == '\0');
 }
 
-static BOOLEAN AmegerImageNamePrefixMatch(PCSTR Name, SIZE_T PrefixLen)
+static BOOLEAN InjectorImageNamePrefixMatch(PCSTR Name, SIZE_T PrefixLen)
 {
-    PCSTR want = AMEGER_CLIENT_IMAGE_NAME;
+    PCSTR want = INJECTOR_CLIENT_IMAGE_NAME;
     SIZE_T i;
 
     if (Name == NULL) return FALSE;
@@ -112,13 +112,13 @@ static BOOLEAN AmegerImageNamePrefixMatch(PCSTR Name, SIZE_T PrefixLen)
     return TRUE;
 }
 
-NTSTATUS AmegerChannelMapIntoProcess(_In_ PEPROCESS Process)
+NTSTATUS InjectorChannelMapIntoProcess(_In_ PEPROCESS Process)
 {
     NTSTATUS status;
     HANDLE hSection;
     HANDLE hProcess = NULL;
-    PVOID userVa = (PVOID)AMEGER_CHANNEL_USER_VA;
-    SIZE_T viewSize = AMEGER_CHANNEL_TOTAL_SIZE;
+    PVOID userVa = (PVOID)INJECTOR_CHANNEL_USER_VA;
+    SIZE_T viewSize = INJECTOR_CHANNEL_TOTAL_SIZE;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
 #if DBG
@@ -131,18 +131,18 @@ NTSTATUS AmegerChannelMapIntoProcess(_In_ PEPROCESS Process)
     if (Process == NULL)
         return STATUS_INVALID_PARAMETER;
 
-    hSection = AmegerChannelGetSectionHandle();
+    hSection = InjectorChannelGetSectionHandle();
     if (hSection == NULL) {
-        AmegerDiagLog("[MapInto] exit: STATUS_NOT_READY (no section handle)\n");
+        InjectorDiagLog("[MapInto] exit: STATUS_NOT_READY (no section handle)\n");
         return STATUS_NOT_READY;
     }
 
     if (PsGetProcessExitStatus(Process) != STATUS_PENDING) {
-        AmegerDiagLog("[MapInto] skip: process is exiting\n");
+        InjectorDiagLog("[MapInto] skip: process is exiting\n");
         return STATUS_PROCESS_IS_TERMINATING;
     }
     if (PsGetProcessPeb(Process) == NULL) {
-        AmegerDiagLog("[MapInto] skip: no PEB\n");
+        InjectorDiagLog("[MapInto] skip: no PEB\n");
         return STATUS_NOT_FOUND;
     }
 
@@ -151,13 +151,13 @@ NTSTATUS AmegerChannelMapIntoProcess(_In_ PEPROCESS Process)
                                    *PsProcessType, KernelMode,
                                    &hProcess);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[MapInto] ObOpenObjectByPointer: status=0x%08X\n", status);
+        InjectorDiagLog("[MapInto] ObOpenObjectByPointer: status=0x%08X\n", status);
         return status;
     }
 
     if (PsGetProcessExitStatus(Process) != STATUS_PENDING) {
         ZwClose(hProcess);
-        AmegerDiagLog("[MapInto] skip: process exiting at map time\n");
+        InjectorDiagLog("[MapInto] skip: process exiting at map time\n");
         return STATUS_PROCESS_IS_TERMINATING;
     }
     status = ZwMapViewOfSection(hSection, hProcess,
@@ -166,19 +166,19 @@ NTSTATUS AmegerChannelMapIntoProcess(_In_ PEPROCESS Process)
 
     if (status == STATUS_CONFLICTING_ADDRESSES) {
         ZwClose(hProcess);
-        AmegerDiagLog("[MapInto] pid=%lu already mapped (conflicting address)\n",
+        InjectorDiagLog("[MapInto] pid=%lu already mapped (conflicting address)\n",
                       (unsigned long)(ULONG_PTR)PsGetProcessId(Process));
         return STATUS_SUCCESS;
     }
     if (!NT_SUCCESS(status)) {
         ZwClose(hProcess);
-        AmegerDiagLog("[MapInto] ZwMapViewOfSection: status=0x%08X\n", status);
+        InjectorDiagLog("[MapInto] ZwMapViewOfSection: status=0x%08X\n", status);
         return status;
     }
 
-    if ((UINT_PTR)userVa != (UINT_PTR)AMEGER_CHANNEL_USER_VA) {
-        AmegerDiagLog("[MapInto] VA mismatch: got=%p expected=%p\n",
-                      userVa, (PVOID)AMEGER_CHANNEL_USER_VA);
+    if ((UINT_PTR)userVa != (UINT_PTR)INJECTOR_CHANNEL_USER_VA) {
+        InjectorDiagLog("[MapInto] VA mismatch: got=%p expected=%p\n",
+                      userVa, (PVOID)INJECTOR_CHANNEL_USER_VA);
         (void)ZwUnmapViewOfSection(hProcess, userVa);
         ZwClose(hProcess);
         return STATUS_CONFLICTING_ADDRESSES;
@@ -186,18 +186,18 @@ NTSTATUS AmegerChannelMapIntoProcess(_In_ PEPROCESS Process)
 
     ZwClose(hProcess);
 
-    AmegerDiagLog("[MapInto] mapped pid=%lu userVa=%p\n",
+    InjectorDiagLog("[MapInto] mapped pid=%lu userVa=%p\n",
                   (unsigned long)(ULONG_PTR)PsGetProcessId(Process), userVa);
     return STATUS_SUCCESS;
 }
 
-NTSTATUS AmegerChannelMapExisting(VOID)
+NTSTATUS InjectorChannelMapExisting(VOID)
 {
     NTSTATUS status;
     ULONG len = 0;
     ULONG used = 0;
     ULONG offset = 0;
-    PAMEGER_SYSTEM_PROCESS_INFORMATION spi = NULL;
+    PINJECTOR_SYSTEM_PROCESS_INFORMATION spi = NULL;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
 #if DBG
@@ -209,38 +209,38 @@ NTSTATUS AmegerChannelMapExisting(VOID)
 
     status = ZwQuerySystemInformation(SystemProcessInformation, NULL, 0, &len);
     if (status != STATUS_INFO_LENGTH_MISMATCH) {
-        AmegerDiagLog("[Existing] size query: status=0x%08X\n", status);
+        InjectorDiagLog("[Existing] size query: status=0x%08X\n", status);
         return status;
     }
 
     len += 0x10000;
-    spi = (PAMEGER_SYSTEM_PROCESS_INFORMATION)ExAllocatePool2(
-        POOL_FLAG_PAGED, len, AMEGER_TAG_LOOKUP);
+    spi = (PINJECTOR_SYSTEM_PROCESS_INFORMATION)ExAllocatePool2(
+        POOL_FLAG_PAGED, len, INJECTOR_TAG_LOOKUP);
     if (spi == NULL)
         return STATUS_INSUFFICIENT_RESOURCES;
 
     used = len;
     status = ZwQuerySystemInformation(SystemProcessInformation, spi, len, &used);
     if (!NT_SUCCESS(status)) {
-        AmegerDiagLog("[Existing] query: status=0x%08X\n", status);
-        ExFreePoolWithTag(spi, AMEGER_TAG_LOOKUP);
+        InjectorDiagLog("[Existing] query: status=0x%08X\n", status);
+        ExFreePoolWithTag(spi, INJECTOR_TAG_LOOKUP);
         return status;
     }
     if (used > len)
         used = len;
 
     for (;;) {
-        PAMEGER_SYSTEM_PROCESS_INFORMATION cur;
+        PINJECTOR_SYSTEM_PROCESS_INFORMATION cur;
         ULONG entrySize;
 
-        if (offset + FIELD_OFFSET(AMEGER_SYSTEM_PROCESS_INFORMATION, Threads) > used)
+        if (offset + FIELD_OFFSET(INJECTOR_SYSTEM_PROCESS_INFORMATION, Threads) > used)
             break;
 
-        cur = (PAMEGER_SYSTEM_PROCESS_INFORMATION)((PUINT8)spi + offset);
+        cur = (PINJECTOR_SYSTEM_PROCESS_INFORMATION)((PUINT8)spi + offset);
         entrySize = (cur->NextEntryOffset != 0) ? cur->NextEntryOffset
                                                 : (used - offset);
         if ((SIZE_T)entrySize <=
-            (SIZE_T)FIELD_OFFSET(AMEGER_SYSTEM_PROCESS_INFORMATION, Threads))
+            (SIZE_T)FIELD_OFFSET(INJECTOR_SYSTEM_PROCESS_INFORMATION, Threads))
             break;
 
         if (cur->ImageName.Buffer != NULL && cur->ImageName.Length > 0) {
@@ -253,24 +253,24 @@ NTSTATUS AmegerChannelMapExisting(VOID)
             for (i = 0; i < chars; i++)
                 img[i] = (CHAR)cur->ImageName.Buffer[i];
 
-            if (AmegerImageNameMatch(img)) {
+            if (InjectorImageNameMatch(img)) {
                 PEPROCESS proc = NULL;
                 NTSTATUS lookupStatus =
                     PsLookupProcessByProcessId(cur->UniqueProcessId, &proc);
                 if (NT_SUCCESS(lookupStatus)) {
-                    NTSTATUS mapStatus = AmegerChannelMapIntoProcess(proc);
-                    AmegerDiagLog("[Existing] PID %lu map result=0x%08X\n",
+                    NTSTATUS mapStatus = InjectorChannelMapIntoProcess(proc);
+                    InjectorDiagLog("[Existing] PID %lu map result=0x%08X\n",
                                   (unsigned long)(ULONG_PTR)cur->UniqueProcessId,
                                   mapStatus);
                     ObDereferenceObject(proc);
                 } else {
-                    AmegerDiagLog("[Existing] PID %lu lookup=0x%08X\n",
+                    InjectorDiagLog("[Existing] PID %lu lookup=0x%08X\n",
                                   (unsigned long)(ULONG_PTR)cur->UniqueProcessId,
                                   lookupStatus);
                 }
-            } else if (AmegerImageNamePrefixMatch(img, 4)) {
+            } else if (InjectorImageNamePrefixMatch(img, 4)) {
 
-                AmegerDiagLog("[Existing] PID %lu candidate name='%s'\n",
+                InjectorDiagLog("[Existing] PID %lu candidate name='%s'\n",
                               (unsigned long)(ULONG_PTR)cur->UniqueProcessId,
                               img);
             }
@@ -281,6 +281,6 @@ NTSTATUS AmegerChannelMapExisting(VOID)
         offset += cur->NextEntryOffset;
     }
 
-    ExFreePoolWithTag(spi, AMEGER_TAG_LOOKUP);
+    ExFreePoolWithTag(spi, INJECTOR_TAG_LOOKUP);
     return STATUS_SUCCESS;
 }

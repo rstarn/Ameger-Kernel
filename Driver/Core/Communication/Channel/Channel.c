@@ -18,13 +18,13 @@ typedef NTSTATUS (NTAPI *PFN_MmUnmapViewInSystemSpace)(
 static PFN_MmMapViewInSystemSpace   g_pMmMapViewInSystemSpace   = NULL;
 static PFN_MmUnmapViewInSystemSpace g_pMmUnmapViewInSystemSpace = NULL;
 
-static PAMEGER_CHANNEL g_Channel = NULL;
+static PINJECTOR_CHANNEL g_Channel = NULL;
 static HANDLE          g_SectionHandle = NULL;
 static PVOID           g_KernelView = NULL;
 static PUINT8          g_PayloadBuffer = NULL;
 
 static NTSTATUS
-AmegerResolveSystemViewApis(VOID)
+InjectorResolveSystemViewApis(VOID)
 {
     UNICODE_STRING us;
 
@@ -50,7 +50,7 @@ AmegerResolveSystemViewApis(VOID)
 }
 
 NTSTATUS
-AmegerMapSectionInSystemSpace(_In_ HANDLE SectionHandle,
+InjectorMapSectionInSystemSpace(_In_ HANDLE SectionHandle,
                               _Out_ PVOID *MappedBase,
                               _Inout_ PSIZE_T ViewSize)
 {
@@ -67,7 +67,7 @@ AmegerMapSectionInSystemSpace(_In_ HANDLE SectionHandle,
     if (KeGetCurrentIrql() != PASSIVE_LEVEL)
         return STATUS_INVALID_DEVICE_STATE;
 
-    status = AmegerResolveSystemViewApis();
+    status = InjectorResolveSystemViewApis();
     if (!NT_SUCCESS(status))
         return status;
 
@@ -92,19 +92,19 @@ AmegerMapSectionInSystemSpace(_In_ HANDLE SectionHandle,
 }
 
 VOID
-AmegerUnmapSectionInSystemSpace(_In_ PVOID MappedBase)
+InjectorUnmapSectionInSystemSpace(_In_ PVOID MappedBase)
 {
     if (MappedBase != NULL && g_pMmUnmapViewInSystemSpace != NULL)
         (void)g_pMmUnmapViewInSystemSpace(MappedBase);
 }
 
 NTSTATUS
-AmegerChannelInitialize(VOID)
+InjectorChannelInitialize(VOID)
 {
     NTSTATUS status;
     LARGE_INTEGER maxSize;
-    SIZE_T viewSize = AMEGER_CHANNEL_TOTAL_SIZE;
-    PAMEGER_CHANNEL ch;
+    SIZE_T viewSize = INJECTOR_CHANNEL_TOTAL_SIZE;
+    PINJECTOR_CHANNEL ch;
     OBJECT_ATTRIBUTES sectionOa;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL)
@@ -113,7 +113,7 @@ AmegerChannelInitialize(VOID)
     if (g_SectionHandle != NULL)
         return STATUS_ALREADY_REGISTERED;
 
-    status = AmegerResolveSystemViewApis();
+    status = InjectorResolveSystemViewApis();
     if (!NT_SUCCESS(status))
         return status;
 
@@ -121,7 +121,7 @@ AmegerChannelInitialize(VOID)
                                OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
                                NULL, NULL);
 
-    maxSize.QuadPart = AMEGER_CHANNEL_TOTAL_SIZE;
+    maxSize.QuadPart = INJECTOR_CHANNEL_TOTAL_SIZE;
     status = ZwCreateSection(&g_SectionHandle,
                              SECTION_MAP_READ | SECTION_MAP_WRITE,
                              &sectionOa, &maxSize, PAGE_READWRITE,
@@ -129,7 +129,7 @@ AmegerChannelInitialize(VOID)
     if (!NT_SUCCESS(status))
         return status;
 
-    status = AmegerMapSectionInSystemSpace(g_SectionHandle,
+    status = InjectorMapSectionInSystemSpace(g_SectionHandle,
                                            &g_KernelView, &viewSize);
     if (!NT_SUCCESS(status)) {
         ZwClose(g_SectionHandle);
@@ -137,18 +137,18 @@ AmegerChannelInitialize(VOID)
         return status;
     }
 
-    ch = (PAMEGER_CHANNEL)g_KernelView;
-    RtlZeroMemory(ch, AMEGER_CHANNEL_TOTAL_SIZE);
-    ch->Magic      = AMEGER_CHANNEL_MAGIC;
-    ch->AbiVersion = AMEGER_CHANNEL_ABI_VERSION;
+    ch = (PINJECTOR_CHANNEL)g_KernelView;
+    RtlZeroMemory(ch, INJECTOR_CHANNEL_TOTAL_SIZE);
+    ch->Magic      = INJECTOR_CHANNEL_MAGIC;
+    ch->AbiVersion = INJECTOR_CHANNEL_ABI_VERSION;
     g_Channel = ch;
 
     g_PayloadBuffer = (PUINT8)ExAllocatePool2(
         POOL_FLAG_NON_PAGED,
-        AMEGER_PAYLOAD_BUF_SIZE,
-        AMEGER_TAG_LOOKUP);
+        INJECTOR_PAYLOAD_BUF_SIZE,
+        INJECTOR_TAG_LOOKUP);
     if (g_PayloadBuffer == NULL) {
-        AmegerUnmapSectionInSystemSpace(g_KernelView);
+        InjectorUnmapSectionInSystemSpace(g_KernelView);
         g_KernelView = NULL;
         ZwClose(g_SectionHandle);
         g_SectionHandle = NULL;
@@ -158,26 +158,26 @@ AmegerChannelInitialize(VOID)
 
 #if DBG
     DbgPrint("[Driver] channel kernel VA=%p (user VA=0x%llX) payload=%p magic=%016llX abi=%u\n",
-             g_KernelView, (unsigned long long)AMEGER_CHANNEL_USER_VA,
+             g_KernelView, (unsigned long long)INJECTOR_CHANNEL_USER_VA,
              g_PayloadBuffer,
-             (unsigned long long)AMEGER_CHANNEL_MAGIC,
-             AMEGER_CHANNEL_ABI_VERSION);
+             (unsigned long long)INJECTOR_CHANNEL_MAGIC,
+             INJECTOR_CHANNEL_ABI_VERSION);
 #endif
     return STATUS_SUCCESS;
 }
 
 VOID
-AmegerChannelDestroy(VOID)
+InjectorChannelDestroy(VOID)
 {
     if (KeGetCurrentIrql() != PASSIVE_LEVEL)
         return;
 
     if (g_PayloadBuffer != NULL) {
-        ExFreePoolWithTag(g_PayloadBuffer, AMEGER_TAG_LOOKUP);
+        ExFreePoolWithTag(g_PayloadBuffer, INJECTOR_TAG_LOOKUP);
         g_PayloadBuffer = NULL;
     }
     if (g_KernelView != NULL) {
-        AmegerUnmapSectionInSystemSpace(g_KernelView);
+        InjectorUnmapSectionInSystemSpace(g_KernelView);
         g_KernelView = NULL;
     }
     if (g_SectionHandle != NULL) {
@@ -187,7 +187,7 @@ AmegerChannelDestroy(VOID)
     g_Channel = NULL;
 }
 
-PAMEGER_CHANNEL AmegerChannelGet(VOID)             { return g_Channel; }
-HANDLE          AmegerChannelGetSectionHandle(VOID){ return g_SectionHandle; }
-PUINT8          AmegerChannelGetPayloadBuffer(VOID){ return g_PayloadBuffer; }
-UINT32          AmegerChannelGetPayloadBufferSize(VOID){ return AMEGER_PAYLOAD_BUF_SIZE; }
+PINJECTOR_CHANNEL InjectorChannelGet(VOID)             { return g_Channel; }
+HANDLE          InjectorChannelGetSectionHandle(VOID){ return g_SectionHandle; }
+PUINT8          InjectorChannelGetPayloadBuffer(VOID){ return g_PayloadBuffer; }
+UINT32          InjectorChannelGetPayloadBufferSize(VOID){ return INJECTOR_PAYLOAD_BUF_SIZE; }

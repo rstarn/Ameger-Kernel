@@ -14,17 +14,17 @@ NTKERNELAPI NTSTATUS MmCopyVirtualMemory(
 
 NTKERNELAPI PPEB PsGetProcessPeb(_In_ PEPROCESS Process);
 
-extern VOID AmegerDiagLog(_In_ PCSTR Format, ...);
+extern VOID InjectorDiagLog(_In_ PCSTR Format, ...);
 
-#define AMEGER_IMPORT_MAX_DLLS        64
-#define AMEGER_IMPORT_MAX_FUNCS       8192
-#define AMEGER_IMPORT_MAX_NAMES       8192
-#define AMEGER_IMPORT_MAX_THUNKS      4096
-#define AMEGER_IMPORT_MAX_FORWARD     2
-#define AMEGER_USER_MIN               0x10000ULL
-#define AMEGER_USER_MAX               0x00007FFFFFFF0000ULL
-#define AMEGER_MODULE_NAME_MAX        256
-#define AMEGER_RESOLVE_NAME_MAX       256
+#define INJECTOR_IMPORT_MAX_DLLS        64
+#define INJECTOR_IMPORT_MAX_FUNCS       8192
+#define INJECTOR_IMPORT_MAX_NAMES       8192
+#define INJECTOR_IMPORT_MAX_THUNKS      4096
+#define INJECTOR_IMPORT_MAX_FORWARD     2
+#define INJECTOR_USER_MIN               0x10000ULL
+#define INJECTOR_USER_MAX               0x00007FFFFFFF0000ULL
+#define INJECTOR_MODULE_NAME_MAX        256
+#define INJECTOR_RESOLVE_NAME_MAX       256
 
 static NTSTATUS
 ImportRead(_In_ PEPROCESS Target, _In_ PVOID Remote,
@@ -33,8 +33,8 @@ ImportRead(_In_ PEPROCESS Target, _In_ PVOID Remote,
     NTSTATUS status;
     SIZE_T done = 0;
 
-    if ((ULONG_PTR)Remote < AMEGER_USER_MIN ||
-        (ULONG_PTR)Remote >= AMEGER_USER_MAX)
+    if ((ULONG_PTR)Remote < INJECTOR_USER_MIN ||
+        (ULONG_PTR)Remote >= INJECTOR_USER_MAX)
         return STATUS_INVALID_ADDRESS;
 
     status = MmCopyVirtualMemory(Target, Remote,
@@ -80,7 +80,7 @@ AsciiICmp(_In_ const char *A, _In_ const char *B)
         if (a == '\0')
             return TRUE;
         i++;
-        if (i > AMEGER_MODULE_NAME_MAX)
+        if (i > INJECTOR_MODULE_NAME_MAX)
             return FALSE;
     }
 }
@@ -140,7 +140,7 @@ ImportFindModule(_In_ PEPROCESS Target, _In_ const char *DllName,
 
         if (cur == headVA)
             break;
-        if (cur < AMEGER_USER_MIN || cur >= AMEGER_USER_MAX)
+        if (cur < INJECTOR_USER_MIN || cur >= INJECTOR_USER_MAX)
             return STATUS_INVALID_ADDRESS;
 
         if (!NT_SUCCESS(ImportRead(Target, (PVOID)(cur - 0x10),
@@ -152,8 +152,8 @@ ImportFindModule(_In_ PEPROCESS Target, _In_ const char *DllName,
         nameBuf = *(PVOID *)(entry + 0x60);
 
         if (dllBase != NULL && nameBuf != NULL &&
-            nameLen > 0 && nameLen <= AMEGER_MODULE_NAME_MAX * 2) {
-            USHORT wide[AMEGER_MODULE_NAME_MAX];
+            nameLen > 0 && nameLen <= INJECTOR_MODULE_NAME_MAX * 2) {
+            USHORT wide[INJECTOR_MODULE_NAME_MAX];
 
             if (NT_SUCCESS(ImportRead(Target, nameBuf, wide, nameLen))) {
                 nameChars = nameLen / 2;
@@ -170,7 +170,7 @@ ImportFindModule(_In_ PEPROCESS Target, _In_ const char *DllName,
     return STATUS_NOT_FOUND;
 }
 
-typedef struct _AMEGER_EXPORT_VIEW {
+typedef struct _INJECTOR_EXPORT_VIEW {
     PVOID     ModuleBase;
     ULONG     NumberOfFunctions;
     ULONG     NumberOfNames;
@@ -180,20 +180,20 @@ typedef struct _AMEGER_EXPORT_VIEW {
     PUSHORT   Ordinals;
     ULONG     ExportRva;
     ULONG     ExportSize;
-} AMEGER_EXPORT_VIEW, *PAMEGER_EXPORT_VIEW;
+} INJECTOR_EXPORT_VIEW, *PINJECTOR_EXPORT_VIEW;
 
 static VOID
-ImportFreeExportView(_In_ PAMEGER_EXPORT_VIEW V)
+ImportFreeExportView(_In_ PINJECTOR_EXPORT_VIEW V)
 {
-    if (V->Functions != NULL) ExFreePoolWithTag(V->Functions, AMEGER_TAG_IMPORTS);
-    if (V->Names != NULL)     ExFreePoolWithTag(V->Names, AMEGER_TAG_IMPORTS);
-    if (V->Ordinals != NULL)  ExFreePoolWithTag(V->Ordinals, AMEGER_TAG_IMPORTS);
+    if (V->Functions != NULL) ExFreePoolWithTag(V->Functions, INJECTOR_TAG_IMPORTS);
+    if (V->Names != NULL)     ExFreePoolWithTag(V->Names, INJECTOR_TAG_IMPORTS);
+    if (V->Ordinals != NULL)  ExFreePoolWithTag(V->Ordinals, INJECTOR_TAG_IMPORTS);
     RtlZeroMemory(V, sizeof(*V));
 }
 
 static NTSTATUS
 ImportOpenExportView(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
-                     _Out_ PAMEGER_EXPORT_VIEW V)
+                     _Out_ PINJECTOR_EXPORT_VIEW V)
 {
     IMAGE_DOS_HEADER dos;
     IMAGE_NT_HEADERS64 nt;
@@ -228,8 +228,8 @@ ImportOpenExportView(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
                         &edf, sizeof(edf));
     if (!NT_SUCCESS(status))
         return status;
-    if (edf.NumberOfFunctions > AMEGER_IMPORT_MAX_FUNCS ||
-        edf.NumberOfNames > AMEGER_IMPORT_MAX_NAMES)
+    if (edf.NumberOfFunctions > INJECTOR_IMPORT_MAX_FUNCS ||
+        edf.NumberOfNames > INJECTOR_IMPORT_MAX_NAMES)
         return STATUS_INVALID_IMAGE_FORMAT;
 
     nFunc = edf.NumberOfFunctions;
@@ -243,13 +243,13 @@ ImportOpenExportView(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
 
     V->Functions = (PULONG)ExAllocatePool2(POOL_FLAG_NON_PAGED,
                                            nFunc * sizeof(ULONG),
-                                           AMEGER_TAG_IMPORTS);
+                                           INJECTOR_TAG_IMPORTS);
     V->Names = (PULONG)ExAllocatePool2(POOL_FLAG_NON_PAGED,
                                        nNames * sizeof(ULONG),
-                                       AMEGER_TAG_IMPORTS);
+                                       INJECTOR_TAG_IMPORTS);
     V->Ordinals = (PUSHORT)ExAllocatePool2(POOL_FLAG_NON_PAGED,
                                            nNames * sizeof(USHORT),
-                                           AMEGER_TAG_IMPORTS);
+                                           INJECTOR_TAG_IMPORTS);
     if (V->Functions == NULL || V->Names == NULL || V->Ordinals == NULL) {
         ImportFreeExportView(V);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -276,7 +276,7 @@ ImportResolveOne(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
                  _In_ const char *Symbol, _In_ ULONG Depth,
                  _Out_ PVOID *OutVa)
 {
-    AMEGER_EXPORT_VIEW view;
+    INJECTOR_EXPORT_VIEW view;
     NTSTATUS status;
     ULONG i;
 
@@ -289,7 +289,7 @@ ImportResolveOne(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
     status = STATUS_NOT_FOUND;
 
     for (i = 0; i < view.NumberOfNames; i++) {
-        char name[AMEGER_RESOLVE_NAME_MAX];
+        char name[INJECTOR_RESOLVE_NAME_MAX];
         USHORT ord;
         ULONG funcRva;
         PVOID va;
@@ -312,15 +312,15 @@ ImportResolveOne(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
 
         if (funcRva >= view.ExportRva &&
             funcRva < view.ExportRva + view.ExportSize) {
-            char fwd[AMEGER_MODULE_NAME_MAX];
-            char fwdModule[AMEGER_MODULE_NAME_MAX];
-            char fwdSymbol[AMEGER_MODULE_NAME_MAX];
+            char fwd[INJECTOR_MODULE_NAME_MAX];
+            char fwdModule[INJECTOR_MODULE_NAME_MAX];
+            char fwdSymbol[INJECTOR_MODULE_NAME_MAX];
             char *dot;
             PVOID fwdBase = NULL;
             SIZE_T mi, si;
             NTSTATUS fwdStatus;
 
-            if (Depth + 1 >= AMEGER_IMPORT_MAX_FORWARD)
+            if (Depth + 1 >= INJECTOR_IMPORT_MAX_FORWARD)
                 break;
 
             RtlZeroMemory(fwd, sizeof(fwd));
@@ -363,7 +363,7 @@ ImportResolveOne(_In_ PEPROCESS Target, _In_ PVOID ModuleBase,
 
             fwdStatus = ImportFindModule(Target, fwdModule, &fwdBase);
             if (!NT_SUCCESS(fwdStatus)) {
-                AmegerDiagLog("[Imports] forwarder module %s not loaded (from %s!%s)\n",
+                InjectorDiagLog("[Imports] forwarder module %s not loaded (from %s!%s)\n",
                               fwdModule, (const char *)Symbol, fwdModule);
                 break;
             }
@@ -385,7 +385,7 @@ out:
 }
 
 NTSTATUS
-AmegerFindImageExport(_In_ UINT8 *Image,
+InjectorFindImageExport(_In_ UINT8 *Image,
                       _In_ UINT32 ImageSize,
                       _In_ const char *Symbol,
                       _Out_ ULONG *OutRva)
@@ -425,8 +425,8 @@ AmegerFindImageExport(_In_ UINT8 *Image,
         return STATUS_NOT_FOUND;
 
     RtlCopyMemory(&edf, Image + expDir.VirtualAddress, sizeof(edf));
-    if (edf.NumberOfNames > AMEGER_IMPORT_MAX_NAMES ||
-        edf.NumberOfFunctions > AMEGER_IMPORT_MAX_FUNCS)
+    if (edf.NumberOfNames > INJECTOR_IMPORT_MAX_NAMES ||
+        edf.NumberOfFunctions > INJECTOR_IMPORT_MAX_FUNCS)
         return STATUS_INVALID_IMAGE_FORMAT;
 
     NumberOfNames = edf.NumberOfNames;
@@ -456,7 +456,7 @@ AmegerFindImageExport(_In_ UINT8 *Image,
             continue;
 
         name = (const char *)(Image + nameRva);
-        for (j = 0; j <= AMEGER_MODULE_NAME_MAX; j++) {
+        for (j = 0; j <= INJECTOR_MODULE_NAME_MAX; j++) {
             UCHAR a;
             UCHAR b;
 
@@ -507,7 +507,7 @@ ImportRealModuleName(_In_ const char *Name)
 }
 
 NTSTATUS
-AmegerResolveImports(_In_ PEPROCESS Target,
+InjectorResolveImports(_In_ PEPROCESS Target,
                      _In_ UINT8 *Image,
                      _In_ UINT32 ImageSize)
 {
@@ -533,20 +533,20 @@ AmegerResolveImports(_In_ PEPROCESS Target,
 
     impDir = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     if (impDir.VirtualAddress == 0 || impDir.Size == 0) {
-        AmegerDiagLog("[Imports] payload has no imports\n");
+        InjectorDiagLog("[Imports] payload has no imports\n");
         return STATUS_SUCCESS;
     }
     if (impDir.VirtualAddress + impDir.Size > ImageSize)
         return STATUS_INVALID_IMAGE_FORMAT;
 
-    AmegerDiagLog("[Imports] resolving %u bytes of descriptors\n", impDir.Size);
+    InjectorDiagLog("[Imports] resolving %u bytes of descriptors\n", impDir.Size);
 
     for (i = 0; ; i++) {
         IMAGE_IMPORT_DESCRIPTOR desc;
         UINT64 descOffset = (UINT64)impDir.VirtualAddress +
                             (UINT64)i * sizeof(desc);
         const char *realName;
-        char dllName[AMEGER_MODULE_NAME_MAX];
+        char dllName[INJECTOR_MODULE_NAME_MAX];
         PVOID modBase = NULL;
         ULONGLONG va = 0;
         ULONG thunk;
@@ -554,7 +554,7 @@ AmegerResolveImports(_In_ PEPROCESS Target,
         UINT64 iatBase;
         UINT64 oft;
 
-        if (i >= AMEGER_IMPORT_MAX_DLLS)
+        if (i >= INJECTOR_IMPORT_MAX_DLLS)
             return STATUS_INVALID_IMAGE_FORMAT;
         if (descOffset + sizeof(desc) >
             (UINT64)impDir.VirtualAddress + impDir.Size)
@@ -585,7 +585,7 @@ AmegerResolveImports(_In_ PEPROCESS Target,
 
         st = ImportFindModule(Target, realName, &modBase);
         if (!NT_SUCCESS(st)) {
-            AmegerDiagLog("[Imports] FAIL: module %s (as %s) not loaded in target\n",
+            InjectorDiagLog("[Imports] FAIL: module %s (as %s) not loaded in target\n",
                           dllName, realName);
             failCount++;
             continue;
@@ -597,13 +597,13 @@ AmegerResolveImports(_In_ PEPROCESS Target,
             return STATUS_INVALID_IMAGE_FORMAT;
 
         iatBase = desc.FirstThunk;
-        AmegerDiagLog("[Imports] %s -> base=%p\n", realName, modBase);
+        InjectorDiagLog("[Imports] %s -> base=%p\n", realName, modBase);
 
         for (thunk = 0; ; thunk++) {
             UINT64 thunkValue;
             ULONGLONG rva;
 
-            if (thunk >= AMEGER_IMPORT_MAX_THUNKS)
+            if (thunk >= INJECTOR_IMPORT_MAX_THUNKS)
                 return STATUS_INVALID_IMAGE_FORMAT;
             if (oft + (UINT64)thunk * 8 + 8 > ImageSize)
                 return STATUS_INVALID_IMAGE_FORMAT;
@@ -617,7 +617,7 @@ AmegerResolveImports(_In_ PEPROCESS Target,
 
             if ((thunkValue & 0x8000000000000000ULL) != 0) {
                 ULONG ord = (ULONG)(thunkValue & 0xFFFF);
-                AMEGER_EXPORT_VIEW view;
+                INJECTOR_EXPORT_VIEW view;
                 NTSTATUS ost;
 
                 ost = ImportOpenExportView(Target, modBase, &view);
@@ -632,13 +632,13 @@ AmegerResolveImports(_In_ PEPROCESS Target,
                     ImportFreeExportView(&view);
                 }
                 if (!NT_SUCCESS(ost)) {
-                    AmegerDiagLog("[Imports] FAIL: %s!ordinal:%lu\n",
+                    InjectorDiagLog("[Imports] FAIL: %s!ordinal:%lu\n",
                                   realName, ord);
                     failCount++;
                     continue;
                 }
             } else {
-                char symName[AMEGER_RESOLVE_NAME_MAX];
+                char symName[INJECTOR_RESOLVE_NAME_MAX];
 
                 rva = thunkValue & 0xFFFFFFFFULL;
                 if (rva + 2 >= ImageSize)
@@ -658,7 +658,7 @@ AmegerResolveImports(_In_ PEPROCESS Target,
                     va = (ULONGLONG)(ULONG_PTR)resolvedVa;
                 }
                 if (!NT_SUCCESS(st)) {
-                    AmegerDiagLog("[Imports] FAIL: %s!%s (0x%08llX)\n",
+                    InjectorDiagLog("[Imports] FAIL: %s!%s (0x%08llX)\n",
                                   realName, symName, thunkValue);
                     failCount++;
                     continue;
@@ -672,7 +672,7 @@ AmegerResolveImports(_In_ PEPROCESS Target,
         descCount++;
     }
 
-    AmegerDiagLog("[Imports] done: %u descriptors, %u unresolved\n",
+    InjectorDiagLog("[Imports] done: %u descriptors, %u unresolved\n",
                   descCount, failCount);
 
     if (failCount != 0)

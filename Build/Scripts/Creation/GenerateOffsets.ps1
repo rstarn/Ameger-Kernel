@@ -1,12 +1,12 @@
 
 param(
-  [string]$OutFile = "D:\Ameger\Mapper\Build\Release\Offsets.ini",
+  [string]$OutFile = "D:\Injector\Mapper\Build\Release\Offsets.ini",
   [string]$TargetBuild = "26300",
   [switch]$NoPause
 )
 $ErrorActionPreference = "Stop"
-$tool = "D:\Ameger\Mapper\Build\Release\SymbolTool.exe"
-if (-not (Test-Path $tool)) { throw "SymbolTool.exe missing at $tool (use D:\Ameger\Mapper directly)" }
+$tool = "D:\Injector\Mapper\Build\Release\SymbolTool.exe"
+if (-not (Test-Path $tool)) { throw "SymbolTool.exe missing at $tool (use D:\Injector\Mapper directly)" }
 if (Test-Path $OutFile) { Remove-Item $OutFile }
 & $tool --generate --output $OutFile
 if ($LASTEXITCODE -ne 0) { throw "SymbolTool failed ($LASTEXITCODE)" }
@@ -15,5 +15,5 @@ $age = (Get-Date) - (Get-Item $OutFile).LastWriteTime
 if ($age.TotalDays -gt 90) {
   Write-Warning "Offsets.ini older than 90 days; regenerate against fresh PDB"
 }
-Write-Host "Offsets -> $OutFile (build $TargetBuild, mtime $((Get-Item $OutFile).LastWriteTime), direct D:\Ameger\Mapper)"
+Write-Host "Offsets -> $OutFile (build $TargetBuild, mtime $((Get-Item $OutFile).LastWriteTime), direct D:\Injector\Mapper)"
 if (-not $NoPause -and $Host.Name -eq "ConsoleHost") { Read-Host "Enter" | Out-Null }

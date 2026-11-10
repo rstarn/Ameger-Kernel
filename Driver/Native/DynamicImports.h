@@ -3,7 +3,7 @@
 #include <ntifs.h>
 #include <ntimage.h>
 
-typedef struct _AMEGER_EXPORTS {
+typedef struct _INJECTOR_EXPORTS {
     PVOID    NtoskrnlBase;
     ULONG    NtoskrnlSize;
     PVOID    ObRegisterCallbacks;
@@ -14,10 +14,10 @@ typedef struct _AMEGER_EXPORTS {
     PVOID    AcpiBase;
     PVOID    TcpipBase;
     PVOID    NdisBase;
-} AMEGER_EXPORTS, *PAMEGER_EXPORTS;
+} INJECTOR_EXPORTS, *PINJECTOR_EXPORTS;
 
-NTSTATUS AmegerExportsInitialize(PAMEGER_EXPORTS Out);
-VOID     AmegerExportsDestroy(PAMEGER_EXPORTS Exports);
-PVOID    AmegerResolveExport(PAMEGER_EXPORTS Exports,
+NTSTATUS InjectorExportsInitialize(PINJECTOR_EXPORTS Out);
+VOID     InjectorExportsDestroy(PINJECTOR_EXPORTS Exports);
+PVOID    InjectorResolveExport(PINJECTOR_EXPORTS Exports,
                              PCSTR ModuleName,
                              PCSTR FunctionName);

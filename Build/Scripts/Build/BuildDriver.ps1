@@ -33,10 +33,10 @@ Write-Host "Using MSBuild: $msbuild"
 $outSys = "Assets\Driver\Driver.sys"
 if (Test-Path $outSys) { Remove-Item $outSys -Force }
 & $msbuild "Build\Template\Driver.vcxproj" /p:Configuration=$Config /p:Platform=x64 `
-  /p:AmegerPoolTag=$poolTag `
-  /p:AmegerChannelMagic=$channelMagic `
+  /p:InjectorPoolTag=$poolTag `
+  /p:InjectorChannelMagic=$channelMagic `
   /p:ClientName=$clientExe `
-  /p:AmegerPdataRva=0x0 /p:AmegerPdataSize=0x0 `
+  /p:InjectorPdataRva=0x0 /p:InjectorPdataSize=0x0 `
   /p:SignMode=Off /p:EnableInf2cat=false /p:ApiValidator_Enable=false `
   /m /v:minimal
 if ($LASTEXITCODE -ne 0) { throw "Driver build failed ($LASTEXITCODE)" }
@@ -51,11 +51,11 @@ $excSize = [BitConverter]::ToUInt32($b, $dirOff + 4)
 Write-Host ("Extracted .pdata RVA=0x{0:X} SIZE=0x{1:X}" -f $excRva, $excSize)
 
 & $msbuild "Build\Template\Driver.vcxproj" /p:Configuration=$Config /p:Platform=x64 `
-  /p:AmegerPoolTag=$poolTag `
-  /p:AmegerChannelMagic=$channelMagic `
+  /p:InjectorPoolTag=$poolTag `
+  /p:InjectorChannelMagic=$channelMagic `
   /p:ClientName=$clientExe `
-  /p:AmegerPdataRva=$('0x{0:X}' -f $excRva) `
-  /p:AmegerPdataSize=$('0x{0:X}' -f $excSize) `
+  /p:InjectorPdataRva=$('0x{0:X}' -f $excRva) `
+  /p:InjectorPdataSize=$('0x{0:X}' -f $excSize) `
   /p:SignMode=Off /p:EnableInf2cat=false /p:ApiValidator_Enable=false `
   /m /v:minimal
 if ($LASTEXITCODE -ne 0) { throw "Driver build failed ($LASTEXITCODE)" }
