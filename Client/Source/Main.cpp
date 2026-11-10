@@ -932,18 +932,24 @@ static BOOL find_target_module_base(DWORD pid, const char *moduleName,
 static int resolve_system_export(const char *module, const char *symbol,
                                  DWORD *outRva, char *err, size_t errCap)
 {
-    static const char *kAllowed[] = { "ntdll.dll", "kernel32.dll", "kernelbase.dll" };
+    /* Forwarder strings conventionally omit the ".dll" extension
+       ("KERNEL32.Sleep"), so compare on the bare module name. */
+    static const char *kAllowed[] = { "ntdll", "kernel32", "kernelbase" };
     size_t i;
+    size_t mlen = strlen(module);
     HMODULE h;
     FARPROC proc;
 
+    if (mlen >= 4 && _stricmp(module + mlen - 4, ".dll") == 0) mlen -= 4;
+
     for (i = 0; i < sizeof(kAllowed) / sizeof(kAllowed[0]); i++) {
-        if (_stricmp(module, kAllowed[i]) == 0) break;
+        if (strlen(kAllowed[i]) == mlen &&
+            _strnicmp(module, kAllowed[i], mlen) == 0) break;
     }
     if (i == sizeof(kAllowed) / sizeof(kAllowed[0])) {
         snprintf(err, errCap,
-                 "forwarded export points at module '%s'; only ntdll.dll, "
-                 "kernel32.dll and kernelbase.dll can be resolved", module);
+                 "forwarded export points at module '%s'; only ntdll, kernel32 "
+                 "and kernelbase can be resolved", module);
         return 0;
     }
 
