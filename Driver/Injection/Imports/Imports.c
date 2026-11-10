@@ -359,7 +359,7 @@ InjectorLoadDependency(_In_ PEPROCESS Target, _In_ const char *ModuleName,
         return status;
 
     status = InjectorMapImageIntoTarget(Target, buf, size, &base, &sysView,
-                                        &hProcess, NULL);
+                                        &hProcess, NULL, FALSE);
     ExFreePoolWithTag(buf, INJECTOR_TAG_LOOKUP);
     if (!NT_SUCCESS(status)) {
         InjectorDiagLog("[Deps] %s: map into target failed 0x%08X\n",
@@ -371,6 +371,15 @@ InjectorLoadDependency(_In_ PEPROCESS Target, _In_ const char *ModuleName,
     InterlockedIncrement(&g_DependencyCount);
     InjectorDiagLog("[Deps] %s loaded into target base=%p size=%zu\n",
                   ModuleName, base, size);
+
+    if (base == NULL) {
+        InjectorDiagLog("[Deps] %s mapped to NULL base\n", ModuleName);
+        if (hProcess != NULL)
+            ZwClose(hProcess);
+        if (sysView != NULL)
+            InjectorUnmapSectionInSystemSpace(sysView);
+        return STATUS_UNSUCCESSFUL;
+    }
 
     if (hProcess != NULL)
         ZwClose(hProcess);
@@ -967,7 +976,8 @@ ImportRealModuleName(_In_ const char *Name)
 NTSTATUS
 InjectorResolveImports(_In_ PEPROCESS Target,
                      _In_ UINT8 *Image,
-                     _In_ UINT32 ImageSize)
+                     _In_ UINT32 ImageSize,
+                     _In_ BOOLEAN AllowDependencyLoad)
 {
     IMAGE_DOS_HEADER dos;
     IMAGE_NT_HEADERS64 nt;
@@ -975,6 +985,14 @@ InjectorResolveImports(_In_ PEPROCESS Target,
     UINT32 i;
     UINT32 failCount = 0;
     UINT32 descCount = 0;
+
+    /*
+     * A NULL image must never reach the descriptor loop: the loop indexes
+     * off the image base, and a NULL base faults in kernel mode.  Fail
+     * cleanly instead.
+     */
+    if (Image == NULL || ImageSize == 0)
+        return STATUS_INVALID_PARAMETER;
 
     if (Target == NULL || Image == NULL)
         return STATUS_INVALID_PARAMETER;
@@ -1044,7 +1062,7 @@ InjectorResolveImports(_In_ PEPROCESS Target,
 
         st = ImportFindModule(Target, realName, &modBase);
         if (!NT_SUCCESS(st)) {
-            if (!ImportIsApisetName(realName) &&
+            if (!ImportIsApisetName(realName) && AllowDependencyLoad &&
                 InterlockedCompareExchange(&g_ImportDepth, 0, 0) <
                     INJECTOR_MAX_DEPENDENCY_DEPTH) {
                 /*

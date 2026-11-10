@@ -99,7 +99,8 @@ InjectorMapImageIntoTarget(_In_ PEPROCESS Target,
                            _Out_ PVOID *OutBase,
                            _Out_ PVOID *OutSysView,
                            _Out_ PHANDLE OutProcess,
-                           _Out_ PINJECTOR_PE_INFO OutInfo)
+                           _Out_ PINJECTOR_PE_INFO OutInfo,
+                           _In_ BOOLEAN AllowDependencyLoad)
 {
     INJECTOR_PE_INFO info;
     PIMAGE_NT_HEADERS64 nt = NULL;
@@ -152,6 +153,11 @@ InjectorMapImageIntoTarget(_In_ PEPROCESS Target,
     status = InjectorMapSectionInSystemSpace(hSection, &sysView, &sysViewSize);
     if (!NT_SUCCESS(status)) {
         InjectorDiagLog("[Map] system view failed: 0x%08X\n", status);
+        goto fail;
+    }
+    if (sysView == NULL) {
+        InjectorDiagLog("[Map] system view mapped to NULL\n");
+        status = STATUS_UNSUCCESSFUL;
         goto fail;
     }
 
@@ -227,7 +233,7 @@ InjectorMapImageIntoTarget(_In_ PEPROCESS Target,
     }
 
     status = InjectorResolveImports(Target, (UINT8 *)sysView,
-                                  info.SizeOfImage);
+                                    info.SizeOfImage, AllowDependencyLoad);
     if (!NT_SUCCESS(status)) {
         InjectorDiagLog("[Map] import resolution failed: 0x%08X\n", status);
         goto fail;
@@ -314,7 +320,7 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
     InjectorResetDependencyCount();
     status = InjectorMapImageIntoTarget(proc, Buf, (SIZE_T)Size,
                                         &remoteBase, &sysView,
-                                        &hProcess, &info);
+                                        &hProcess, &info, TRUE);
     if (!NT_SUCCESS(status))
         goto fail;
 

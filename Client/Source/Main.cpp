@@ -2028,13 +2028,15 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
     printf("  tls: slot=%ld status=0x%08lX threads_seeded=%ld\n",
            (long)ch->TlsSlot, (unsigned long)ch->TlsStatus,
            (long)ch->TlsThreadsSeeded);
+    printf("  relocations: %llu   import dlls: %llu\n",
+           (unsigned long long)ch->RelocCount,
+           (unsigned long long)ch->ImportDllCount);
+    if (ch->DependencyCount != 0)
+        printf("  dependencies loaded by the driver: %u\n",
+               (unsigned)ch->DependencyCount);
     if (verbose) {
-        printf("  relocations: %llu   import dlls: %llu\n",
-               (unsigned long long)ch->RelocCount,
-               (unsigned long long)ch->ImportDllCount);
-        if (ch->DependencyCount != 0)
-            printf("  dependencies loaded by the driver: %u\n",
-                   (unsigned)ch->DependencyCount);
+        printf("  driver instance gadget: 0x%016llX\n",
+               (unsigned long long)ch->GadgetVa);
     }
     return 0;
 }

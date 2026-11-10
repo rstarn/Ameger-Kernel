@@ -24,4 +24,5 @@ NTSTATUS InjectorMapImageIntoTarget(_In_ PEPROCESS Target,
                                     _Out_ PVOID *OutBase,
                                     _Out_ PVOID *OutSysView,
                                     _Out_ PHANDLE OutProcess,
-                                    _Out_ PINJECTOR_PE_INFO OutInfo);
+                                    _Out_ PINJECTOR_PE_INFO OutInfo,
+                                    _In_ BOOLEAN AllowDependencyLoad);

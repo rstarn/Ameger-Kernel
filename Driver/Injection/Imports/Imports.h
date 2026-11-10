@@ -4,7 +4,8 @@
 
 NTSTATUS InjectorResolveImports(_In_ PEPROCESS Target,
                               _In_ UINT8 *Image,
-                              _In_ UINT32 ImageSize);
+                              _In_ UINT32 ImageSize,
+                              _In_ BOOLEAN AllowDependencyLoad);
 
 NTSTATUS InjectorFindImageExport(_In_ UINT8 *Image,
                                _In_ UINT32 ImageSize,
