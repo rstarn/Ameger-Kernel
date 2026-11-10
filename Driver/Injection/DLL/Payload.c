@@ -205,6 +205,17 @@ InjectorMapImageIntoTarget(_In_ PEPROCESS Target,
     if (info.PreferredBase != 0) {
         UINT_PTR delta = (UINT_PTR)remoteBase - (UINT_PTR)info.PreferredBase;
         if (delta != 0) {
+            if (!info.HasRelocations) {
+                /*
+                 * The image was not mapped at its preferred base and cannot
+                 * be fixed up.  Mapping it anyway would leave absolute
+                 * addresses pointing at the wrong place.
+                 */
+                InjectorDiagLog("[Map] no relocations but base moved by 0x%llX\n",
+                                (unsigned long long)delta);
+                status = STATUS_INVALID_IMAGE_FORMAT;
+                goto fail;
+            }
             status = InjectorApplyRelocations((UINT8 *)sysView,
                                             (SIZE_T)info.SizeOfImage,
                                             &info, delta);
