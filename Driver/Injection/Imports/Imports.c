@@ -160,6 +160,17 @@ typedef struct _INJECTOR_MODULE_ENTRY {
 static INJECTOR_MODULE_ENTRY g_InjectedModules[INJECTOR_MAX_INJECTED_MODULES];
 static ULONG g_InjectedModuleCount = 0;
 static volatile LONG g_ImportDepth = 0;
+static volatile LONG g_DependencyCount = 0;
+
+ULONG InjectorGetDependencyCount(VOID)
+{
+    return (ULONG)InterlockedCompareExchange(&g_DependencyCount, 0, 0);
+}
+
+VOID InjectorResetDependencyCount(VOID)
+{
+    InterlockedExchange(&g_DependencyCount, 0);
+}
 
 /* Case-insensitive module name comparison, ignoring an optional ".dll". */
 static BOOLEAN
@@ -357,6 +368,7 @@ InjectorLoadDependency(_In_ PEPROCESS Target, _In_ const char *ModuleName,
     }
 
     ImportRegisterModule(ModuleName, base);
+    InterlockedIncrement(&g_DependencyCount);
     InjectorDiagLog("[Deps] %s loaded into target base=%p size=%zu\n",
                   ModuleName, base, size);
 

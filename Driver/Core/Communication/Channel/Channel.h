@@ -56,7 +56,7 @@ typedef struct _INJECTOR_CHANNEL {
     volatile UINT64 GadgetVa;
 
     volatile LONG   ObInitStatus;
-    UINT32          _pad_obinit;
+    ULONG           DependencyCount;   /* modules the driver had to load itself */
     UINT8   Ring[INJECTOR_CHANNEL_RING_SIZE];
 } INJECTOR_CHANNEL, *PINJECTOR_CHANNEL;
 

@@ -311,11 +311,17 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
         return STATUS_NOT_FOUND;
     }
 
+    InjectorResetDependencyCount();
     status = InjectorMapImageIntoTarget(proc, Buf, (SIZE_T)Size,
                                         &remoteBase, &sysView,
                                         &hProcess, &info);
     if (!NT_SUCCESS(status))
         goto fail;
+
+    Ch->DependencyCount = InjectorGetDependencyCount();
+    if (Ch->DependencyCount != 0)
+        InjectorDiagLog("[Map] %u dependency module(s) loaded into the target\n",
+                      (unsigned)Ch->DependencyCount);
 
     tlsStatus = InjectorTlsSetup(proc, remoteBase, info.SizeOfImage,
                                &tlsSlot, &tlsSeeded);

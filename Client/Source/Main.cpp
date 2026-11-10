@@ -74,7 +74,7 @@ typedef struct _INJECTOR_CHANNEL {
     volatile unsigned long long SelfTestAck;
     volatile unsigned long long GadgetVa;
     volatile long      ObInitStatus;
-    unsigned int       _pad_obinit;
+    unsigned int       DependencyCount;
     unsigned char      Ring[INJECTOR_CHANNEL_RING_SIZE];
 } INJECTOR_CHANNEL;
 
@@ -1632,6 +1632,8 @@ static int run_status(INJECTOR_CHANNEL *ch)
     green_value("0x%016llX\n", (unsigned long long)ch->GadgetVa);
     printf("  ObCallback Status: ");
     green_value("0x%08lX\n", (unsigned long)ch->ObCallbackStatus);
+    printf("  Driver instance: gadget 0x%016llX", (unsigned long long)ch->GadgetVa);
+    printf(" (a stale instance shows a different gadget)\n");
     printf("\n");
     printf("  TLS Slot: ");
     green_value("%ld", ch->TlsSlot);
@@ -2030,6 +2032,9 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
         printf("  relocations: %llu   import dlls: %llu\n",
                (unsigned long long)ch->RelocCount,
                (unsigned long long)ch->ImportDllCount);
+        if (ch->DependencyCount != 0)
+            printf("  dependencies loaded by the driver: %u\n",
+                   (unsigned)ch->DependencyCount);
     }
     return 0;
 }
