@@ -50,7 +50,7 @@ if (-not (Test-Path $logPath)) {
 }
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "Build\Scripts\Protection\ProtectConfig.ps1" `
-  -Source "Build\Configuration.ini" `
+  -Source "Client\Configuration.ini" `
   -Destination "$releaseDir\Target.ini" `
   -ConfigMagic 'kDDt0r3m'
 if ($LASTEXITCODE -ne 0) { throw "ProtectConfig.ps1 failed ($LASTEXITCODE)" }
