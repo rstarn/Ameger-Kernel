@@ -64,9 +64,6 @@ Write-Host "Sweep    -> PDB/LIB/EXP/ILK/OBJ removed from $releaseDir"
 
 $manifest = "$releaseDir\SectionManifest.txt"
 $lines = @(
-  "# Injector-Kernel release manifest",
-  "# Generated $(Get-Date -Format 'o')",
-  "",
   "Client:   Client.exe",
   "  SHA256: $h"
 )

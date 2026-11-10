@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <string.h>
 #include <winnt.h>
+#include <stdarg.h>
+#include <tlhelp32.h>
 
 #ifndef INJECTOR_CHANNEL_MAGIC
 #define INJECTOR_CHANNEL_MAGIC 0x1122334455667788ULL
@@ -76,6 +78,24 @@ static_assert(INJECTOR_CHANNEL_USER_VA == 0x00007FF000000000ULL,
 static_assert(INJECTOR_SELFTEST_ACK_OFFSET == offsetof(INJECTOR_CHANNEL, SelfTestAck),
               "INJECTOR_SELFTEST_ACK_OFFSET must match the struct offset");
 
+static void green_value(const char *fmt, ...)
+{
+    va_list ap;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO ci = { 0 };
+    int colored = 0;
+
+    va_start(ap, fmt);
+    if (hOut != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(hOut, &ci)) {
+        SetConsoleTextAttribute(hOut, FOREGROUND_GREEN | FOREGROUND_INTENSITY);
+        colored = 1;
+    }
+    vfprintf(stdout, fmt, ap);
+    if (colored)
+        SetConsoleTextAttribute(hOut, ci.wAttributes);
+    va_end(ap);
+}
+
 static INJECTOR_CHANNEL *attach_channel(void)
 {
     const int kMaxAttempts = 50;
@@ -88,10 +108,9 @@ static INJECTOR_CHANNEL *attach_channel(void)
             ch = (INJECTOR_CHANNEL *)INJECTOR_CHANNEL_USER_VA;
             if (ch->Magic == INJECTOR_CHANNEL_MAGIC &&
                 ch->AbiVersion == 6) {
-                if (attempt > 0) {
-                    printf("  channel detected after %d ms\n",
-                           attempt * (int)kDelayMs);
-                }
+                printf("  Channel's Magic: ");
+                green_value("0x%016llX", (unsigned long long)ch->Magic);
+                printf("\n\n");
                 return ch;
             }
 
@@ -107,9 +126,165 @@ static INJECTOR_CHANNEL *attach_channel(void)
         Sleep(kDelayMs);
     }
 
-    printf("  channel not mapped (driver not loaded or poll timer "
-           "did not fire within 5s)\n");
     return NULL;
+}
+
+static void blue_value(const char *fmt, ...)
+{
+    va_list ap;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    CONSOLE_SCREEN_BUFFER_INFO ci = { 0 };
+    int colored = 0;
+
+    va_start(ap, fmt);
+    if (hOut != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(hOut, &ci)) {
+        SetConsoleTextAttribute(hOut, FOREGROUND_BLUE | FOREGROUND_INTENSITY);
+        colored = 1;
+    }
+    vfprintf(stdout, fmt, ap);
+    if (colored)
+        SetConsoleTextAttribute(hOut, ci.wAttributes);
+    va_end(ap);
+}
+
+static void print_channel_va(void)
+{
+    printf("  Channel's Virtual Address: ");
+    green_value("0x%016llX", (unsigned long long)INJECTOR_CHANNEL_USER_VA);
+    printf("\n");
+}
+
+static void wait_for_enter(void)
+{
+    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+
+    if (hIn == NULL || hIn == INVALID_HANDLE_VALUE) return;
+    if (!GetConsoleMode(hIn, &mode)) return;
+    (void)getchar();
+}
+
+static int run_inject(INJECTOR_CHANNEL *ch, unsigned int pid);
+
+static int stdin_is_console(void)
+{
+    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+
+    if (hIn == NULL || hIn == INVALID_HANDLE_VALUE) return 0;
+    return GetConsoleMode(hIn, &mode) ? 1 : 0;
+}
+
+static void trim_input(char *s)
+{
+    size_t len = strlen(s);
+    size_t start = 0, end = len;
+
+    while (start < end && (s[start] == ' ' || s[start] == '\t')) start++;
+    while (end > start &&
+           (s[end - 1] == ' ' || s[end - 1] == '\t' ||
+            s[end - 1] == '\n' || s[end - 1] == '\r')) end--;
+    if (start > 0 || end < len)
+        memmove(s, s + start, end - start);
+    s[end - start] = '\0';
+
+    len = strlen(s);
+    if (len >= 2 && s[0] == '"' && s[len - 1] == '"') {
+        s[len - 1] = '\0';
+        memmove(s, s + 1, len);
+    }
+}
+
+static void str_to_wide(const char *src, WCHAR *dst, size_t cap)
+{
+    size_t i = 0;
+
+    while (src[i] != '\0' && i + 1 < cap) {
+        dst[i] = (WCHAR)(UCHAR)src[i];
+        i++;
+    }
+    dst[i] = L'\0';
+}
+
+static int wide_icmp(const WCHAR *a, const WCHAR *b)
+{
+    for (;;) {
+        WCHAR ca = *a, cb = *b;
+
+        if (ca >= L'A' && ca <= L'Z') ca = (WCHAR)(ca + 32);
+        if (cb >= L'A' && cb <= L'Z') cb = (WCHAR)(cb + 32);
+        if (ca != cb) return (int)(ca - cb);
+        if (ca == L'\0') return 0;
+        a++;
+        b++;
+    }
+}
+
+static DWORD find_process_by_name(const char *name)
+{
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    PROCESSENTRY32 pe;
+    WCHAR want[MAX_PATH];
+    WCHAR wantAlt[MAX_PATH];
+    char alt[MAX_PATH];
+
+    str_to_wide(name, want, MAX_PATH);
+    if (strchr(name, '.') == NULL) {
+        snprintf(alt, sizeof(alt), "%s.exe", name);
+        str_to_wide(alt, wantAlt, MAX_PATH);
+    } else {
+        wantAlt[0] = L'\0';
+    }
+
+    if (snap == INVALID_HANDLE_VALUE)
+        return 0;
+    pe.dwSize = sizeof(pe);
+    if (Process32First(snap, &pe)) {
+        do {
+            if (wide_icmp(pe.szExeFile, want) == 0 ||
+                (wantAlt[0] != L'\0' && wide_icmp(pe.szExeFile, wantAlt) == 0)) {
+                CloseHandle(snap);
+                return pe.th32ProcessID;
+            }
+        } while (Process32Next(snap, &pe));
+    }
+    CloseHandle(snap);
+    return 0;
+}
+
+static int discover_target(INJECTOR_CHANNEL *ch)
+{
+    char name[MAX_PATH];
+    DWORD pid;
+
+    printf("\n----------------------------------------------------------------------------\n\n");
+    printf("Process Name: ");
+    fflush(stdout);
+    if (fgets(name, sizeof(name), stdin) == NULL)
+        name[0] = '\0';
+    trim_input(name);
+
+    if (name[0] == '\0') {
+        printf("Process not found.\n\n");
+        return 0;
+    }
+
+    pid = find_process_by_name(name);
+    if (pid == 0) {
+        printf("Process not found.\n\n");
+        return 0;
+    }
+    printf("Process found. PID: ");
+    green_value("%lu", (unsigned long)pid);
+    printf("\n\n");
+
+    printf("Press ");
+    blue_value("[Enter]");
+    printf(" to inject to the process.\n");
+    if (!stdin_is_console())
+        return 0;
+    (void)getchar();
+    return run_inject(ch, (unsigned int)pid);
 }
 
 static void resolve_target_dll(char *out, size_t cap)
@@ -147,23 +322,6 @@ static void resolve_target_dll(char *out, size_t cap)
         }
     }
     lstrcpynA(out, "Target.dll", (int)cap);
-}
-
-static int interactive_stdin(void)
-{
-    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
-    if (h == NULL || h == INVALID_HANDLE_VALUE) return 0;
-    DWORD mode = 0;
-    return GetConsoleMode(h, &mode) ? 1 : 0;
-}
-
-static void pause_if_interactive(void)
-{
-    if (interactive_stdin()) {
-        printf("\nPress Enter to close... ");
-        fflush(stdout);
-        (void)getchar();
-    }
 }
 
 static int read_file_all(const char *path, unsigned char **out, size_t *out_len)
@@ -237,19 +395,35 @@ static int wait_done(INJECTOR_CHANNEL *ch, DWORD timeoutMs)
 static int run_status(INJECTOR_CHANNEL *ch)
 {
     if (ch == NULL) {
-        printf("status: channel not attached\n");
+        printf("  status: channel not attached\n");
         return 1;
     }
-    printf("  CHANNEL OK : abi=%u pid=%u head=%ld tail=%ld done=%ld\n",
-           ch->AbiVersion, ch->Pid, ch->Head, ch->Tail, ch->Done);
-    printf("abi=%u\n", ch->AbiVersion);
-    printf("magic=0x%016llX\n", (unsigned long long)ch->Magic);
-    printf("sizeof_channel=%u\n", (unsigned)sizeof(INJECTOR_CHANNEL));
-    if (ch->AbiVersion >= 6) {
-        printf("ob_init=0x%08lX gadget=0x%016llX\n", (unsigned long)ch->ObInitStatus, (unsigned long long)ch->GadgetVa);
-    } else {
-        printf("gadget=0x%016llX\n", (unsigned long long)ch->GadgetVa);
-    }
+    printf("  CHANNEL OK: ABI = ");
+    green_value("%u", (unsigned)ch->AbiVersion);
+    printf(" PID = ");
+    green_value("%u", ch->Pid);
+    printf(" Head = ");
+    green_value("%ld", ch->Head);
+    printf(" Tail = ");
+    green_value("%ld", ch->Tail);
+    printf(" Done = ");
+    green_value("%ld\n", ch->Done);
+    printf("  Channel Size: ");
+    green_value("%u", (unsigned)sizeof(INJECTOR_CHANNEL));
+    printf("\n\n");
+    printf("  ObCallback Initialization: ");
+    green_value("0x%08lX", (unsigned long)ch->ObInitStatus);
+    printf(" | Gadget: ");
+    green_value("0x%016llX\n", (unsigned long long)ch->GadgetVa);
+    printf("  ObCallback Status: ");
+    green_value("0x%08lX\n", (unsigned long)ch->ObCallbackStatus);
+    printf("\n");
+    printf("  TLS Slot: ");
+    green_value("%ld", ch->TlsSlot);
+    printf(" | TLS Status: ");
+    green_value("0x%08lX", (unsigned long)ch->TlsStatus);
+    printf(" | TLS Threads Seeded: ");
+    green_value("%ld\n", ch->TlsThreadsSeeded);
     return 0;
 }
 
@@ -478,28 +652,28 @@ static int run_inject(INJECTOR_CHANNEL *ch, unsigned int pid)
 
 int main(int argc, char **argv)
 {
-    printf("Driver client\n");
-    printf("  channel VA : 0x%016llX\n", (unsigned long long)INJECTOR_CHANNEL_USER_VA);
+    int rc = 1;
+
+    printf("Driver's Health:\n\n");
+    print_channel_va();
 
     INJECTOR_CHANNEL *ch = attach_channel();
 
     if (ch != NULL && ch->AbiVersion != 6) {
         fprintf(stderr, "FATAL: channel ABI mismatch: driver reports %u, "
                         "client expects 6\n", ch->AbiVersion);
-        pause_if_interactive();
-        return 1;
+        goto out;
     }
 
-    int rc;
     if (ch == NULL) {
-        printf("\n  Driver channel is not mapped yet.\n");
-        printf("  Load the driver first, then re-open the client:\n");
-        printf("    D:\\Injector\\Mapper\\Build\\Release\\Mapper.exe Assets\\Driver\\Driver.sys\n");
-        printf("\n  Usage (after the driver is loaded):\n");
-        printf("    --status\n");
-        printf("    --inject <pid>\n");
-        rc = 1;
-    } else if (argc <= 1 || strcmp(argv[1], "--status") == 0) {
+        printf("  Driver is not mapped yet.\n");
+        goto out;
+    }
+
+    if (argc <= 1) {
+        rc = run_status(ch);
+        rc = discover_target(ch);
+    } else if (strcmp(argv[1], "--status") == 0) {
         rc = run_status(ch);
     } else if (strcmp(argv[1], "--inject") == 0) {
         const char *pidstr = NULL;
@@ -507,13 +681,11 @@ int main(int argc, char **argv)
             if (pidstr == NULL) pidstr = argv[i];
             else {
                 printf("  usage: %s --inject <pid>\n", argv[0]);
-                rc = 1;
                 goto out;
             }
         }
         if (pidstr == NULL) {
             printf("  usage: %s --inject <pid>\n", argv[0]);
-            rc = 1;
         } else {
             unsigned int pid = (unsigned int)strtoul(pidstr, NULL, 0);
             rc = run_inject(ch, pid);
@@ -522,10 +694,9 @@ int main(int argc, char **argv)
         printf("  usage:\n");
         printf("    %s --status\n", argv[0]);
         printf("    %s --inject <pid>\n", argv[0]);
-        rc = 1;
     }
 
 out:
-    pause_if_interactive();
+    wait_for_enter();
     return rc;
 }

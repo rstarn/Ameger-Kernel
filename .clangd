@@ -1,7 +1,3 @@
-# Editor/clangd configuration for Injector-Kernel (MSBuild+WDK project).
-# The authoritative build is `Build\Executors\Create.bat` / MSBuild with WDK.
-# This file reduces false diagnostics in editors; it does not replace the build.
-
 If:
   PathMatch: Driver/.*
 CompileFlags:
