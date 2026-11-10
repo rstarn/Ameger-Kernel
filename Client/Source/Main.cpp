@@ -29,6 +29,15 @@
 #define INJECTOR_MAX_EXPORT_NAMES   65536
 #define INJECTOR_MAX_NAME_LEN       512
 
+/*
+ * The driver resolves a payload's imports against the modules that are
+ * already loaded in the target process, so the client waits a settle period
+ * before mapping.  Override with --settle <seconds>; 0 disables the wait.
+ */
+#define INJECTOR_DEFAULT_SETTLE_MS  10000
+
+static int g_settleMs = INJECTOR_DEFAULT_SETTLE_MS;
+
 #define INJECTOR_CMD_NONE     0
 #define INJECTOR_CMD_VALIDATE 1
 #define INJECTOR_CMD_MAP      2
@@ -1837,6 +1846,7 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
 {
     unsigned char *buf = plan->Buf;
     size_t len = plan->Len;
+    int settleMs = g_settleMs;
 
     if (ch->AbiVersion != 6) {
         printf("  driver ABI too old (need 6)\n");
@@ -1867,6 +1877,21 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
         InterlockedExchange(&ch->Done, 0);
         printf("  protect: status=0x%08lX pid=%u gadget=0x%016llX ob_init=0x%08lX\n",
                (unsigned long)pst, pid, gadget, (unsigned long)ch->ObInitStatus);
+    }
+
+    /* The driver resolves the payload's imports against the modules that are
+       ALREADY loaded in the target.  Give the target time to finish loading
+       its own DLLs before the map is attempted. */
+    if (settleMs > 0) {
+        DWORD start = GetTickCount();
+        printf("  settle: waiting %d ms for the target to finish loading modules...",
+               settleMs);
+        fflush(stdout);
+        while ((LONG)(GetTickCount() - start) < settleMs) {
+            Sleep(50);
+        }
+        printf(" done (%lu ms elapsed)\n",
+               (unsigned long)(GetTickCount() - start));
     }
 
     ch->Head = 0; ch->Tail = 0;
@@ -2413,6 +2438,9 @@ static void print_usage(const char *exe)
     printf("    --dll <path>      explicit payload path (no fallback if missing)\n");
     printf("    --export <name>   explicit export name (skips auto-discovery)\n");
     printf("    --rva <hex>       explicit RVA, e.g. 0x1D10 or 1D10 (skips export lookup)\n");
+    printf("    --settle <sec>    wait before mapping so the target finishes loading"
+           " modules (default %d, 0 disables)\n",
+           INJECTOR_DEFAULT_SETTLE_MS / 1000);
 }
 
 int main(int argc, char **argv)
@@ -2440,6 +2468,18 @@ int main(int argc, char **argv)
         } else if (_stricmp(a, "--rva") == 0) {
             if (i + 1 >= argc) { printf("  --rva needs a value\n"); return 1; }
             rvaStr = argv[++i];
+        } else if (_stricmp(a, "--settle") == 0) {
+            const char *v = NULL;
+            double secs = 0.0;
+            char *endp = NULL;
+            if (i + 1 >= argc) { printf("  --settle needs a value in seconds\n"); return 1; }
+            v = argv[++i];
+            secs = strtod(v, &endp);
+            if (endp == v || secs < 0.0 || secs > 3600.0) {
+                printf("  invalid --settle value: %s (expected seconds, 0..3600)\n", v);
+                return 1;
+            }
+            g_settleMs = (int)(secs * 1000.0);
         } else if (_stricmp(a, "--list-exports") == 0) {
             mode = CLI_MODE_LIST_EXPORTS;
         } else if (_stricmp(a, "--inject") == 0) {
