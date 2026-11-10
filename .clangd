@@ -1,0 +1,90 @@
+# Editor/clangd configuration for Ameger-Kernel (MSBuild+WDK project).
+# The authoritative build is `Build\Executors\Create.bat` / MSBuild with WDK.
+# This file reduces false diagnostics in editors; it does not replace the build.
+
+If:
+  PathMatch: Driver/.*
+CompileFlags:
+  Add:
+    - -xc
+    - -std=c17
+    - -fms-extensions
+    - -fms-compatibility
+    - -fdeclspec
+    - -Wno-unknown-argument
+    - -D_WIN64
+    - -D_AMD64_
+    - -DAMD64
+    - -D_KERNEL_MODE=1
+    - -DNTDDI_VERSION=0x0A000012
+    - -D_WIN32_WINNT=0x0A00
+    - -DUNICODE
+    - -D_UNICODE
+    - -DAMEGER_CHANNEL_MAGIC=0xA7E3C1D9F042B685ULL
+    - -DAMEGER_POOL_TAG='sfTN'
+    - '-DAMEGER_CLIENT_IMAGE_NAME="Client.exe"'
+    - -DAMEGER_PDATA_RVA=0x0
+    - -DAMEGER_PDATA_SIZE=0x0
+    - -I.
+    - -IDriver
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/km"
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/km/crt"
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/shared"
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/ucrt"
+  Remove:
+    - -target
+    - --target*
+Diagnostics:
+  Suppress:
+    - unknown-argument
+    - drv_unknown_argument
+    - pp_file_not_found
+    - unknown_typename
+    - unknown_typename_suggest
+  ClangTidy:
+    Remove: [misc-include-cleaner]
+
+---
+
+If:
+  PathMatch: Client/.*
+CompileFlags:
+  Add:
+    - -fms-extensions
+    - -fms-compatibility
+    - -D_WIN64
+    - -D_AMD64_
+    - -DUNICODE
+    - -D_UNICODE
+    - -DWIN32_LEAN_AND_MEAN
+    - -DAMEGER_CHANNEL_MAGIC=0xA7E3C1D9F042B685ULL
+    - -DAMEGER_CHANNEL_USER_VA=0x00007FF000000000ULL
+    - -I.
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/um"
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/shared"
+    - "-IC:/Program Files (x86)/Windows Kits/10/Include/10.0.28000.0/ucrt"
+  Remove:
+    - -target
+    - --target*
+Diagnostics:
+  Suppress:
+    - unknown-argument
+    - drv_unknown_argument
+  ClangTidy:
+    Remove: [misc-include-cleaner]
+
+---
+
+CompileFlags:
+  Add:
+    - -fms-extensions
+    - -fms-compatibility
+  Remove:
+    - -target
+    - --target*
+Diagnostics:
+  Suppress:
+    - unknown-argument
+    - drv_unknown_argument
+  ClangTidy:
+    Remove: [misc-include-cleaner]

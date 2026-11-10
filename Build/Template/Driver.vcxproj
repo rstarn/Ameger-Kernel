@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{A7E3C1D9-F042-B685-0001-000000000001}</ProjectGuid>
+    <TemplateGuid>{dd38f7fc-d7bd-488b-9242-7d8754cde80d}</TemplateGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
+    <Configuration>Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <RootNamespace>Driver</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.28000.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>WDM</DriverType>
+    <DriverTargetPlatform>Universal</DriverTargetPlatform>
+    <SignMode>Off</SignMode>
+    <EnableInf2cat>false</EnableInf2cat>
+    <ApiValidator_Enable>false</ApiValidator_Enable>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(AmegerChannelMagic)'==''">
+    <AmegerChannelMagic>0xA7E3C1D9F042B685</AmegerChannelMagic>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AmegerPoolTag)'==''">
+    <AmegerPoolTag>'sfTN'</AmegerPoolTag>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(ClientName)'==''">
+    <ClientName>Client.exe</ClientName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AmegerPdataRva)'==''">
+    <AmegerPdataRva>0x0</AmegerPdataRva>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(AmegerPdataSize)'==''">
+    <AmegerPdataSize>0x0</AmegerPdataSize>
+  </PropertyGroup>
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)..\..\Assets\Driver\</OutDir>
+    <IntDir>$(ProjectDir)..\Release\obj\Driver\$(Configuration)\</IntDir>
+    <TargetName>Driver</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <TreatWarningAsError>false</TreatWarningAsError>
+      <WarningLevel>Level4</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <ControlFlowGuard>false</ControlFlowGuard>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>false</ExceptionHandling>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;NDEBUG;AMEGER_CHANNEL_MAGIC=$(AmegerChannelMagic);AMEGER_POOL_TAG=$(AmegerPoolTag);AMEGER_CLIENT_IMAGE_NAME="$(ClientName)";AMEGER_PDATA_RVA=$(AmegerPdataRva);AMEGER_PDATA_SIZE=$(AmegerPdataSize);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\..\Driver;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Native</SubSystem>
+      <Driver>Driver</Driver>
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <ProgramDatabaseFile>$(ProjectDir)..\Release\obj\Driver\$(Configuration)\$(TargetName).pdb</ProgramDatabaseFile>
+      <TreatLinkerWarningAsErrors>false</TreatLinkerWarningAsErrors>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\Driver\Entry.c" />
+    <ClCompile Include="..\..\Driver\Core\Communication\Channel\Channel.c" />
+    <ClCompile Include="..\..\Driver\Core\Communication\Mapping\Mapping.c" />
+    <ClCompile Include="..\..\Driver\Core\Process\Information.c" />
+    <ClCompile Include="..\..\Driver\Native\DynamicImports.c" />
+    <ClCompile Include="..\..\Driver\Injection\KernelMapping\KernelMapping.c" />
+    <ClCompile Include="..\..\Driver\Injection\Imports\Imports.c" />
+    <ClCompile Include="..\..\Driver\Core\Dispatch\Dispatcher.c" />
+    <ClCompile Include="..\..\Driver\Core\Dispatch\Polling\Poll.c" />
+    <ClCompile Include="..\..\Driver\Injection\DLL\Payload.c" />
+    <ClCompile Include="..\..\Driver\TLS\TLS.c" />
+    <ClCompile Include="..\..\Driver\Execution\Hijack.c" />
+    <ClCompile Include="..\..\Driver\Stealth\ObCallback.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\Driver\Core\Communication\Channel\Channel.h" />
+    <ClInclude Include="..\..\Driver\Core\Communication\Mapping\Mapping.h" />
+    <ClInclude Include="..\..\Driver\Core\Process\Information.h" />
+    <ClInclude Include="..\..\Driver\Core\Dispatch\Polling\Poll.h" />
+    <ClInclude Include="..\..\Driver\NT\Definitions.h" />
+    <ClInclude Include="..\..\Driver\Native\DynamicImports.h" />
+    <ClInclude Include="..\..\Driver\Injection\KernelMapping\KernelMapping.h" />
+    <ClInclude Include="..\..\Driver\Core\Dispatch\Dispatcher.h" />
+    <ClInclude Include="..\..\Driver\Injection\DLL\Payload.h" />
+    <ClInclude Include="..\..\Driver\TLS\TLS.h" />
+    <ClInclude Include="..\..\Driver\Execution\Hijack.h" />
+    <ClInclude Include="..\..\Driver\Stealth\ObCallback.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

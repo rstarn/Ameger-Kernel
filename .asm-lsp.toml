@@ -1,0 +1,6 @@
+[default_config]
+assembler = "masm"
+architecture = "x86-64"
+
+[project]
+include_paths = ["Driver", "Client"]

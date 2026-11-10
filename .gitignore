@@ -1,0 +1,46 @@
+# Build output
+Build/Release/
+Build/Logs/
+Build/obj/
+
+# Generated assembly (canonical inputs live in Assets/{Driver,Client,DLL})
+Assets/Client/Client.exe
+Assets/Release/
+
+# Driver artifacts
+Assets/Driver/*.sys
+Assets/Driver/*.pdb
+
+# Debug artifacts
+*.pdb
+*.lib
+*.exp
+
+# Tool binaries (not committed)
+Tools/*.exe
+Tools/*.dll
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# OpenCode artifacts
+.opencode/
+.oc-workspace/
+
+# Windows junk
+nul
+NUL
+Thumbs.db
+Desktop.ini
+
+# Zed local overrides
+.zed/settings.json.local
+
+# MSBuild intermediates go to Build/Release/obj (gitignored via Build/Release/).
+# Release assembly goes to Assets/Release (gitignored above).
+
+# Phase 7 payload assets (operator-provisioned; not committed)
+Assets/DLL/*.dll
+Assets/DLL/*.pdb
