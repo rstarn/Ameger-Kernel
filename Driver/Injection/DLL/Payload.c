@@ -368,6 +368,23 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
         }
     }
 
+    /*
+     * The section table pointer is derived from the image's own NT headers.
+     * It must be re-derived here: the mapping itself works on a copy in the
+     * system view, and a stale or null section table would fault the kernel
+     * when the sections are protected.
+     */
+    nt = InjectorGetNtHeaders(Buf, (SIZE_T)Size);
+    if (nt == NULL) {
+        status = STATUS_INVALID_IMAGE_FORMAT;
+        goto fail;
+    }
+    sec = IMAGE_FIRST_SECTION(nt);
+    if (sec == NULL) {
+        status = STATUS_INVALID_IMAGE_FORMAT;
+        goto fail;
+    }
+
     for (i = 0; i < nt->FileHeader.NumberOfSections; i++) {
         ULONG prot = InjectorSectionProtection(sec[i].Characteristics);
         PVOID addr;
