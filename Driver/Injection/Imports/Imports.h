@@ -16,3 +16,7 @@ NTSTATUS InjectorFindImageExport(_In_ UINT8 *Image,
    loaded them itself.  Reported to the client through the channel. */
 ULONG  InjectorGetDependencyCount(VOID);
 VOID   InjectorResetDependencyCount(VOID);
+
+/* Register a module the driver mapped into the target, so later import
+   lookups find it even though the loader does not know about it. */
+VOID   InjectorRegisterInjectedModule(_In_ const char *Name, _In_ PVOID Base);

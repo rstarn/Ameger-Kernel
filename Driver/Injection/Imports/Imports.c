@@ -241,170 +241,9 @@ ImportRegisterModule(_In_ const char *Name, _In_ PVOID Base)
     g_InjectedModuleCount++;
 }
 
-/*
- * Read a system module from disk.  The Windows loader can pull a module
- * into a process on demand (LdrpLoadDll); a kernel driver cannot call that,
- * so a dependency the target has not loaded is read and mapped by hand.
- */
-static NTSTATUS
-ImportReadSystemModule(_In_ const char *ModuleName,
-                       _Out_ PUINT8 *OutBuf, _Out_ SIZE_T *OutSize)
+VOID InjectorRegisterInjectedModule(_In_ const char *Name, _In_ PVOID Base)
 {
-    WCHAR wpath[160];
-    UNICODE_STRING path;
-    OBJECT_ATTRIBUTES oa;
-    HANDLE h = NULL;
-    IO_STATUS_BLOCK iosb;
-    FILE_STANDARD_INFORMATION finfo;
-    PUINT8 buf = NULL;
-    SIZE_T n = 0;
-    SIZE_T i;
-    NTSTATUS status;
-    int attempt;
-    static const WCHAR *kDirs[] = {
-        L"\\SystemRoot\\System32\\",
-        L"\\Windows\\System32\\",
-        L"\\SystemRoot\\SysWOW64\\",
-        L"\\SystemRoot\\"
-    };
-
-    *OutBuf = NULL;
-    *OutSize = 0;
-
-    if (ModuleName == NULL || ModuleName[0] == '\0')
-        return STATUS_INVALID_PARAMETER;
-
-    for (attempt = 0; attempt < (int)(sizeof(kDirs) / sizeof(kDirs[0])); attempt++) {
-        size_t dirLen = 0;
-
-        n = 0;
-        for (i = 0; kDirs[attempt][i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++) {
-            wpath[n++] = kDirs[attempt][i];
-            dirLen = n;
-        }
-        for (i = 0; ModuleName[i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++)
-            wpath[n++] = (WCHAR)(UCHAR)ModuleName[i];
-        wpath[n] = L'\0';
-
-        RtlInitUnicodeString(&path, wpath);
-        InitializeObjectAttributes(&oa, &path,
-                                   OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
-                                   NULL, NULL);
-
-        status = ZwCreateFile(&h, GENERIC_READ, &oa, NULL, NULL, 0,
-                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                              FILE_OPEN,
-                              FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
-                              NULL, 0);
-        if (NT_SUCCESS(status))
-            break;
-
-        InjectorDiagLog("[Deps] %s: open failed 0x%08X on %ls\n",
-                      ModuleName, status, &wpath[0]);
-        h = NULL;
-    }
-    if (!NT_SUCCESS(status) || h == NULL) {
-        InjectorDiagLog("[Deps] %s: not loadable from disk\n", ModuleName);
-        return (NT_SUCCESS(status)) ? STATUS_OBJECT_NAME_NOT_FOUND : status;
-    }
-
-    RtlZeroMemory(&finfo, sizeof(finfo));
-    status = ZwQueryInformationFile(h, &iosb, &finfo, sizeof(finfo),
-                                    FileStandardInformation);
-    if (!NT_SUCCESS(status) || finfo.AllocationSize.QuadPart <= 0) {
-        ZwClose(h);
-        return (NT_SUCCESS(status)) ? STATUS_INVALID_PARAMETER : status;
-    }
-    if ((ULONG64)finfo.AllocationSize.QuadPart > INJECTOR_MAX_DEPENDENCY_SIZE) {
-        ZwClose(h);
-        InjectorDiagLog("[Deps] %s: too large (%lld bytes)\n", ModuleName,
-                      (long long)finfo.AllocationSize.QuadPart);
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    buf = (PUINT8)ExAllocatePool2(POOL_FLAG_NON_PAGED,
-                                  (SIZE_T)finfo.AllocationSize.QuadPart,
-                                  INJECTOR_TAG_LOOKUP);
-    if (buf == NULL) {
-        ZwClose(h);
-        return STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    {
-        LARGE_INTEGER off;
-        ULONG done = 0;
-
-        off.QuadPart = 0;
-        status = ZwReadFile(h, NULL, NULL, NULL, &iosb, buf,
-                            (ULONG)finfo.AllocationSize.QuadPart, &off, NULL);
-        if (!NT_SUCCESS(status)) {
-            ExFreePoolWithTag(buf, INJECTOR_TAG_LOOKUP);
-            ZwClose(h);
-            InjectorDiagLog("[Deps] %s: read failed 0x%08X\n", ModuleName, status);
-            return status;
-        }
-        done = (ULONG)iosb.Information;
-        *OutSize = (SIZE_T)done;
-    }
-    ZwClose(h);
-
-    *OutBuf = buf;
-    return STATUS_SUCCESS;
-}
-
-/*
- * Bring a module the target has not loaded into the target's address space,
- * the way the loader would when it resolves an import.  The module is mapped,
- * relocated and its own imports are resolved; it is then tracked so later
- * lookups find it.
- */
-static NTSTATUS
-InjectorLoadDependency(_In_ PEPROCESS Target, _In_ const char *ModuleName,
-                       _Out_ PVOID *OutBase)
-{
-    PUINT8 buf = NULL;
-    SIZE_T size = 0;
-    PVOID base = NULL;
-    PVOID sysView = NULL;
-    HANDLE hProcess = NULL;
-    NTSTATUS status;
-
-    *OutBase = NULL;
-
-    status = ImportReadSystemModule(ModuleName, &buf, &size);
-    if (!NT_SUCCESS(status))
-        return status;
-
-    status = InjectorMapImageIntoTarget(Target, buf, size, &base, &sysView,
-                                        &hProcess, NULL, FALSE);
-    ExFreePoolWithTag(buf, INJECTOR_TAG_LOOKUP);
-    if (!NT_SUCCESS(status)) {
-        InjectorDiagLog("[Deps] %s: map into target failed 0x%08X\n",
-                      ModuleName, status);
-        return status;
-    }
-
-    ImportRegisterModule(ModuleName, base);
-    InterlockedIncrement(&g_DependencyCount);
-    InjectorDiagLog("[Deps] %s loaded into target base=%p size=%zu\n",
-                  ModuleName, base, size);
-
-    if (base == NULL) {
-        InjectorDiagLog("[Deps] %s mapped to NULL base\n", ModuleName);
-        if (hProcess != NULL)
-            ZwClose(hProcess);
-        if (sysView != NULL)
-            InjectorUnmapSectionInSystemSpace(sysView);
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    if (hProcess != NULL)
-        ZwClose(hProcess);
-    if (sysView != NULL)
-        InjectorUnmapSectionInSystemSpace(sysView);
-
-    *OutBase = base;
-    return STATUS_SUCCESS;
+    ImportRegisterModule(Name, Base);
 }
 
 static NTSTATUS
@@ -1003,6 +842,8 @@ InjectorResolveImports(_In_ PEPROCESS Target,
     UINT32 failCount = 0;
     UINT32 descCount = 0;
 
+    UNREFERENCED_PARAMETER(AllowDependencyLoad);
+
     /*
      * A NULL image must never reach the descriptor loop: the loop indexes
      * off the image base, and a NULL base faults in kernel mode.  Fail
@@ -1079,24 +920,13 @@ InjectorResolveImports(_In_ PEPROCESS Target,
 
         st = ImportFindModule(Target, realName, &modBase);
         if (!NT_SUCCESS(st)) {
-            if (!ImportIsApisetName(realName) && AllowDependencyLoad &&
-                InterlockedCompareExchange(&g_ImportDepth, 0, 0) <
-                    INJECTOR_MAX_DEPENDENCY_DEPTH) {
-                /*
-                 * The target has not loaded this module.  The Windows loader
-                 * would pull it in on demand; the driver does the same by
-                 * mapping it into the target by hand.
-                 */
-                InterlockedIncrement(&g_ImportDepth);
-                st = InjectorLoadDependency(Target, realName, &modBase);
-                InterlockedDecrement(&g_ImportDepth);
-                if (NT_SUCCESS(st)) {
-                    InjectorDiagLog("[Imports] module %s was not loaded in the "
-                                  "target; loaded it as a dependency\n", realName);
-                }
-            }
-        }
-        if (!NT_SUCCESS(st)) {
+            /*
+             * The target does not have this module.  The client ships the
+             * missing dependencies before the payload is mapped, so the
+             * driver never reads the filesystem: the mapper's provider driver
+             * hooks file opens and its image is gone by the time an injection
+             * runs, so a kernel-mode open faults in freed provider code.
+             */
             if (!ImportIsApisetName(realName)) {
                 InjectorDiagLog("[Imports] FAIL: module %s (as %s) not loaded in target\n",
                               dllName, realName);

@@ -20,6 +20,10 @@
 #define INJECTOR_CMD_EXEC         3
 #define INJECTOR_CMD_PROTECT_PID  4
 
+/* Set in Ch->Flags when the payload being mapped is a dependency the target
+   does not have yet, rather than the payload itself. */
+#define INJECTOR_FLAG_DEPENDENCY   0x1u
+
 #define INJECTOR_TLS_SLOT_INVALID  (-1)
 
 typedef struct _INJECTOR_CHANNEL {

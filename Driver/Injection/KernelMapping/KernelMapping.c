@@ -395,6 +395,42 @@ NTSTATUS InjectorWalkImports(_In_ const UINT8 *ImageBuf,
     return STATUS_SUCCESS;
 }
 
+VOID
+InjectorGetImageExportName(_In_reads_bytes_(Size) const UINT8 *Image,
+                           _In_ SIZE_T Size,
+                           _Out_ CHAR OutName[256])
+{
+    IMAGE_DOS_HEADER dos;
+    IMAGE_NT_HEADERS64 nt;
+    IMAGE_DATA_DIRECTORY dd;
+    IMAGE_EXPORT_DIRECTORY exp;
+    SIZE_T i;
+
+    OutName[0] = '\0';
+    if (Image == NULL || Size < sizeof(dos)) return;
+
+    RtlCopyMemory(&dos, Image, sizeof(dos));
+    if (dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew < 0) return;
+    if ((SIZE_T)dos.e_lfanew + sizeof(nt) > Size) return;
+
+    RtlCopyMemory(&nt, Image + dos.e_lfanew, sizeof(nt));
+    if (nt.OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_EXPORT) return;
+
+    dd = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (dd.VirtualAddress == 0 || dd.Size == 0) return;
+    if ((SIZE_T)dd.VirtualAddress + sizeof(exp) > Size) return;
+
+    RtlCopyMemory(&exp, Image + dd.VirtualAddress, sizeof(exp));
+    if (exp.Name == 0 || (SIZE_T)exp.Name + 1 > Size) return;
+
+    for (i = 0; i + 1 < 256 && (SIZE_T)exp.Name + i < Size; i++) {
+        OutName[i] = (CHAR)Image[exp.Name + i];
+        if (OutName[i] == '\0')
+            return;
+    }
+    OutName[255] = '\0';
+}
+
 PIMAGE_NT_HEADERS64 InjectorGetNtHeaders(_In_reads_bytes_(Size) const UINT8 *Buf,
                                        _In_ SIZE_T Size)
 {

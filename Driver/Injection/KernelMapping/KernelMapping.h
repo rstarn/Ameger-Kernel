@@ -36,3 +36,9 @@ NTSTATUS InjectorWalkImports(_In_ const UINT8 *ImageBuf,
 
 PIMAGE_NT_HEADERS64 InjectorGetNtHeaders(_In_reads_bytes_(Size) const UINT8 *Buf,
                                        _In_ SIZE_T Size);
+
+/* Read the image's own module name out of its export directory.  Works on a
+   mapped image, where the RVA is the offset. */
+VOID InjectorGetImageExportName(_In_reads_bytes_(Size) const UINT8 *Image,
+                                _In_ SIZE_T Size,
+                                _Out_ CHAR OutName[256]);

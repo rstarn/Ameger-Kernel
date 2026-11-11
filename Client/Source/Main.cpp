@@ -29,6 +29,7 @@
 #define INJECTOR_MAX_EXPORT_NAMES   65536
 #define INJECTOR_MAX_NAME_LEN       512
 #define INJECTOR_MAX_TLS_CALLBACKS  16
+#define INJECTOR_MAX_IMPORT_MODULES 64
 
 /*
  * The driver resolves a payload's imports against the modules that are
@@ -44,6 +45,10 @@ static int g_settleMs = INJECTOR_DEFAULT_SETTLE_MS;
 #define INJECTOR_CMD_MAP      2
 #define INJECTOR_CMD_EXEC     3
 #define INJECTOR_CMD_PROTECT_PID 4
+
+/* Set in Ch->Flags when the payload being mapped is a dependency the target
+   does not have yet, rather than the payload itself. */
+#define INJECTOR_FLAG_DEPENDENCY 0x1u
 
 typedef struct _INJECTOR_CHANNEL {
     unsigned long long Magic;
@@ -313,6 +318,11 @@ typedef struct _INJECTOR_PE {
        DLL_PROCESS_ATTACH before DllMain; a manual map has to do the same. */
     DWORD               TlsCallbackRva[INJECTOR_MAX_TLS_CALLBACKS];
     int                 TlsCallbackCount;
+
+    /* Modules the image imports, so the driver can be told which ones the
+       target does not have yet. */
+    char                ImportModule[INJECTOR_MAX_IMPORT_MODULES][INJECTOR_MAX_NAME_LEN];
+    int                 ImportModuleCount;
 } INJECTOR_PE;
 
 /* Frees the export tables.  The image buffer is owned by the caller. */
@@ -716,6 +726,53 @@ static void pe_parse_tls(INJECTOR_PE *pe)
             break;
         pe->TlsCallbackRva[pe->TlsCallbackCount++] =
             (DWORD)(va - pe->Nt.OptionalHeader.ImageBase);
+    }
+}
+
+/*
+ * Collect the modules the image imports.  The driver needs this list so it
+ * can be told which dependencies the target does not have yet: the client
+ * reads those files (user mode, where file access is safe and unrestricted)
+ * and ships the bytes to the driver, which maps them into the target.
+ */
+static void pe_parse_imports(INJECTOR_PE *pe)
+{
+    IMAGE_DATA_DIRECTORY dd;
+    DWORD descOff;
+    int i;
+
+    pe->ImportModuleCount = 0;
+    if (pe->Nt.OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_IMPORT)
+        return;
+
+    dd = pe->Nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dd.VirtualAddress == 0 || dd.Size < sizeof(IMAGE_IMPORT_DESCRIPTOR))
+        return;
+
+    descOff = dd.VirtualAddress;
+    for (i = 0; i < INJECTOR_MAX_IMPORT_MODULES; i++) {
+        IMAGE_IMPORT_DESCRIPTOR desc;
+        DWORD raw = 0;
+        SIZE_T k = 0;
+
+        if ((SIZE_T)descOff + sizeof(desc) > (SIZE_T)dd.VirtualAddress + dd.Size)
+            break;
+        if (!pe_rva_to_raw(pe, descOff, &raw)) break;
+        if ((SIZE_T)raw + sizeof(desc) > pe->Len) break;
+        memcpy(&desc, pe->Buf + raw, sizeof(desc));
+        if (desc.Name == 0 && desc.OriginalFirstThunk == 0 && desc.FirstThunk == 0)
+            break;
+
+        if (desc.Name != 0 && pe_rva_to_raw(pe, desc.Name, &raw)) {
+            while (k + 1 < sizeof(pe->ImportModule[0]) &&
+                   (SIZE_T)raw + k < pe->Len && pe->Buf[raw + k] != '\0') {
+                pe->ImportModule[pe->ImportModuleCount][k] = (char)pe->Buf[raw + k];
+                k++;
+            }
+            pe->ImportModule[pe->ImportModuleCount][k] = '\0';
+            if (k > 0) pe->ImportModuleCount++;
+        }
+        descOff += (DWORD)sizeof(desc);
     }
 }
 
@@ -1805,6 +1862,7 @@ static int plan_prepare(INJECT_PLAN *plan, const char *dllOverride,
     }
     plan->PeParsed = TRUE;
     pe_parse_exports(&plan->Pe);
+    pe_parse_imports(&plan->Pe);
     pe_parse_tls(&plan->Pe);
     if (plan->Pe.TlsCallbackCount > 0) {
         printf("  TLS callbacks: %d (first at RVA 0x%X)\n",
@@ -1923,6 +1981,74 @@ static int resolve_forwarded_entry(const INJECTOR_PE *pe, const EXPORT_CHOICE *c
 /* Injection                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Ship the modules the target does not have yet to the driver.
+ *
+ * The Windows loader pulls a missing dependency in on demand; a kernel
+ * driver cannot ask the loader to do that, and reading the file from kernel
+ * mode is what destabilised the machine (the mapper's provider driver hooks
+ * file opens and its image is gone by then).  So the client reads the file
+ * - user mode, where it is ordinary - and hands the bytes to the driver,
+ * which maps them into the target.
+ */
+static int inject_dependencies(INJECTOR_CHANNEL *ch, unsigned int pid,
+                               INJECT_PLAN *plan)
+{
+    char sysRoot[MAX_PATH];
+    char path[MAX_PATH];
+    char err[512];
+    int i;
+
+    if (GetEnvironmentVariableA("SystemRoot", sysRoot, (DWORD)sizeof(sysRoot)) == 0)
+        lstrcpynA(sysRoot, "C:\\Windows", (int)sizeof(sysRoot));
+
+    for (i = 0; i < plan->Pe.ImportModuleCount; i++) {
+        const char *mod = plan->Pe.ImportModule[i];
+        unsigned long long base = 0;
+        unsigned char *buf = NULL;
+        size_t len = 0;
+        long status;
+
+        if (mod[0] == '\0') continue;
+        if (find_target_module_base(pid, mod, &base)) continue;
+
+        snprintf(path, sizeof(path), "%s\\System32\\%s", sysRoot, mod);
+        err[0] = '\0';
+        if (!file_read_all(path, &buf, &len, err, sizeof(err))) {
+            printf("  dependency %s: not available (%s)\n", mod, err);
+            continue;
+        }
+
+        printf("  dependency %s: shipping %zu bytes to the driver\n", mod, len);
+
+        ch->Head = 0; ch->Tail = 0;
+        ch->PayloadSize = (unsigned int)len;
+        ch->PayloadReceived = 0;
+        ch->Flags = INJECTOR_FLAG_DEPENDENCY;
+        InterlockedExchange(&ch->Done, 0);
+        InterlockedExchange(&ch->Cmd, INJECTOR_CMD_NONE);
+
+        if (!send_payload(ch, buf, len)) { free(buf); return 0; }
+        InterlockedExchange(&ch->Cmd, INJECTOR_CMD_MAP);
+        if (!wait_done(ch, 10000)) {
+            printf("  dependency %s: driver timeout\n", mod);
+            free(buf);
+            return 0;
+        }
+        status = ch->CmdStatus;
+        InterlockedExchange(&ch->Done, 0);
+        free(buf);
+
+        if (status != 0) {
+            printf("  dependency %s: driver refused (0x%08lX)\n",
+                   mod, (unsigned long)status);
+            return 0;
+        }
+        printf("  dependency %s: mapped into the target\n", mod);
+    }
+    return 1;
+}
+
 static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
                        int verbose)
 {
@@ -1974,6 +2100,12 @@ static int inject_map(INJECTOR_CHANNEL *ch, unsigned int pid, INJECT_PLAN *plan,
         }
         printf(" done (%lu ms elapsed)\n",
                (unsigned long)(GetTickCount() - start));
+    }
+
+    /* Bring in the modules the target is missing before mapping the payload. */
+    if (!inject_dependencies(ch, pid, plan)) {
+        printf("  inject failed: a required dependency could not be supplied\n");
+        return 5;
     }
 
     ch->Head = 0; ch->Tail = 0;

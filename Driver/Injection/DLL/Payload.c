@@ -1,4 +1,5 @@
 #include "Payload.h"
+#include "../Imports/Imports.h"
 #include "../KernelMapping/KernelMapping.h"
 #include "../Imports/Imports.h"
 #include "../../TLS/TLS.h"
@@ -323,6 +324,31 @@ DriverKernelMap(_Inout_ PINJECTOR_CHANNEL Ch,
                                         &hProcess, &info, TRUE);
     if (!NT_SUCCESS(status))
         goto fail;
+
+    /*
+     * A dependency the target was missing: it has been mapped, so register
+     * it under its own name and stop - the client maps the real payload
+     * next and the import resolver finds this one through the registry.
+     */
+    if ((Ch->Flags & INJECTOR_FLAG_DEPENDENCY) != 0) {
+        CHAR depName[256];
+
+        InjectorGetImageExportName((UINT8 *)sysView, (SIZE_T)info.SizeOfImage,
+                                   depName);
+        if (depName[0] != '\0') {
+            InjectorRegisterInjectedModule(depName, remoteBase);
+            InjectorDiagLog("[Deps] %s mapped into the target base=%p\n",
+                          depName, remoteBase);
+        }
+        Ch->RemoteBase = (volatile unsigned long long)(ULONG_PTR)remoteBase;
+        Ch->CmdStatus = (LONG)STATUS_SUCCESS;
+        if (hProcess != NULL)
+            ZwClose(hProcess);
+        if (sysView != NULL)
+            InjectorUnmapSectionInSystemSpace(sysView);
+        ObDereferenceObject(proc);
+        return STATUS_SUCCESS;
+    }
 
     Ch->DependencyCount = InjectorGetDependencyCount();
     if (Ch->DependencyCount != 0)
