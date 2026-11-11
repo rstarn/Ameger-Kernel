@@ -260,6 +260,13 @@ ImportReadSystemModule(_In_ const char *ModuleName,
     SIZE_T n = 0;
     SIZE_T i;
     NTSTATUS status;
+    int attempt;
+    static const WCHAR *kDirs[] = {
+        L"\\SystemRoot\\System32\\",
+        L"\\Windows\\System32\\",
+        L"\\SystemRoot\\SysWOW64\\",
+        L"\\SystemRoot\\"
+    };
 
     *OutBuf = NULL;
     *OutSize = 0;
@@ -267,28 +274,38 @@ ImportReadSystemModule(_In_ const char *ModuleName,
     if (ModuleName == NULL || ModuleName[0] == '\0')
         return STATUS_INVALID_PARAMETER;
 
-    {
-        const WCHAR prefix[] = L"\\SystemRoot\\System32\\";
+    for (attempt = 0; attempt < (int)(sizeof(kDirs) / sizeof(kDirs[0])); attempt++) {
+        size_t dirLen = 0;
 
-        for (i = 0; prefix[i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++)
-            wpath[n++] = prefix[i];
+        n = 0;
+        for (i = 0; kDirs[attempt][i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++) {
+            wpath[n++] = kDirs[attempt][i];
+            dirLen = n;
+        }
         for (i = 0; ModuleName[i] != 0 && n + 1 < (sizeof(wpath) / sizeof(wpath[0])); i++)
             wpath[n++] = (WCHAR)(UCHAR)ModuleName[i];
         wpath[n] = L'\0';
+
+        RtlInitUnicodeString(&path, wpath);
+        InitializeObjectAttributes(&oa, &path,
+                                   OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
+                                   NULL, NULL);
+
+        status = ZwCreateFile(&h, GENERIC_READ, &oa, NULL, NULL, 0,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              FILE_OPEN,
+                              FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                              NULL, 0);
+        if (NT_SUCCESS(status))
+            break;
+
+        InjectorDiagLog("[Deps] %s: open failed 0x%08X on %ls\n",
+                      ModuleName, status, &wpath[0]);
+        h = NULL;
     }
-
-    RtlInitUnicodeString(&path, wpath);
-    InitializeObjectAttributes(&oa, &path,
-                               OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE,
-                               NULL, NULL);
-
-    status = ZwCreateFile(&h, GENERIC_READ, &oa, NULL, NULL, 0,
-                          FILE_SHARE_READ, FILE_OPEN,
-                          FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
-                          NULL, 0);
-    if (!NT_SUCCESS(status)) {
-        InjectorDiagLog("[Deps] %s: open failed 0x%08X\n", ModuleName, status);
-        return status;
+    if (!NT_SUCCESS(status) || h == NULL) {
+        InjectorDiagLog("[Deps] %s: not loadable from disk\n", ModuleName);
+        return (NT_SUCCESS(status)) ? STATUS_OBJECT_NAME_NOT_FOUND : status;
     }
 
     RtlZeroMemory(&finfo, sizeof(finfo));
